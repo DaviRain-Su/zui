@@ -110,12 +110,20 @@ vendor/cui/          upstream CUI (include/, src/, third_party/, LICENSE)
 
 ## Updating the vendored CUI
 
+The vendored library is synced with one command:
+
 ```sh
-git clone https://github.com/yappologistic/CUI.git
-cd CUI && git checkout <commit>
-rm -rf vendor/cui && cp -R include src third_party LICENSE ../zui/vendor/cui/
-echo '<commit>' > ../zui/vendor/cui/VENDOR.txt
+tools/sync_cui.sh            # sync to upstream master, pinned to its commit
+tools/sync_cui.sh v1.4.0     # or pin to a release tag / branch / commit
+tools/sync_cui.sh --check    # only report: vendored vs master vs latest release
 ```
+
+The script clones the ref shallowly, replaces exactly `vendor/cui/{include,src,third_party,LICENSE}`, writes `vendor/cui/VENDOR.txt` (ref + commit), regenerates `vendor/cui/SOURCES.txt` (the C source manifest that `build.zig` reads via `@embedFile`), regenerates the Zig bindings and runs the test suite — a sync can never leave the build broken unnoticed.
+
+Two design choices worth knowing:
+
+* **Plain files, not a git submodule.** The tree must exist for `zig build` to work from a plain clone, and we vendor only a subset (no `docs/ web/ tests/ examples/`), which submodules can't express. The commit hash in `VENDOR.txt` gives the same reproducibility a submodule would.
+* **The C source list is a manifest, not hardcoded.** `build.zig` compiles what `SOURCES.txt` lists, so upstream adding/removing files never breaks the build. (`cui_bidi.c`/`cui_shape.c` are excluded at sync time: optional text shaping, matching upstream's CMake default.)
 
 ## Status
 

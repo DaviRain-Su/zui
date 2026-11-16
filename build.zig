@@ -1,70 +1,29 @@
 const std = @import("std");
 
-// Every C source of the vendored CUI library (mirrors CUI_CORE_SOURCES in
-// vendor/cui's CMakeLists.txt, with the default options: embedded fonts,
-// stb_image image loading).
-const cui_sources = [_][]const u8{
-    "src/cui_core.c",
-    "src/cui_theme.c",
-    "src/cui_draw.c",
-    "src/cui_text.c",
-    "src/cui_layout.c",
-    "src/cui_widgets.c",
-    "src/cui_controls.c",
-    "src/cui_textedit.c",
-    "src/cui_overlay.c",
-    "src/cui_data.c",
-    "src/cui_charts.c",
-    "src/cui_extras.c",
-    "src/cui_actions.c",
-    "src/cui_pickers.c",
-    "src/cui_disclosure.c",
-    "src/cui_loading.c",
-    "src/cui_grid.c",
-    "src/cui_treetable.c",
-    "src/cui_code.c",
-    "src/cui_markdown.c",
-    "src/cui_editor.c",
-    "src/cui_diff.c",
-    "src/cui_tools.c",
-    "src/cui_hex.c",
-    "src/cui_social.c",
-    "src/cui_media.c",
-    "src/cui_planning.c",
-    "src/cui_chrome.c",
-    "src/cui_dock.c",
-    "src/cui_viz.c",
-    "src/cui_motion.c",
-    "src/cui_ai.c",
-    "src/cui_voice.c",
-    "src/cui_image.c",
-    "src/cui_nodes.c",
-    "src/cui_flame.c",
-    "src/cui_curves.c",
-    "src/cui_timeline.c",
-    "src/cui_dials.c",
-    "src/cui_month.c",
-    "src/cui_strings.c",
-    "src/cui_devtools.c",
-    "src/cui_graph.c",
-    "src/cui_devpanels.c",
-    "src/cui_regex.c",
-    "src/cui_devviews.c",
-    "src/cui_instrument.c",
-    "src/cui_canvas.c",
-    "src/cui_tour.c",
-    "src/cui_photo.c",
-    "src/cui_creative.c",
-    "src/cui_files.c",
-    "src/cui_terminal.c",
-    "src/cui_emoji.c",
-    "src/cui_font_data.c",
-    "src/cui_inflate.c",
-    "src/render/cui_render_sw.c",
-    "src/render/cui_render_gl.c",
-    // app layer (window + event loop), backend chosen per target OS
-    "src/platform/cui_app.c",
-    "src/platform/cui_dialogs.c",
+// The vendored CUI library's source list comes from vendor/cui/SOURCES.txt,
+// which tools/sync_cui.sh regenerates on every sync - so upstream adding or
+// removing files never breaks the build. (Read with @embedFile: build.zig
+// cannot touch the filesystem at configuration time.)
+// Optional components are excluded at sync time: cui_bidi.c/cui_shape.c only
+// build with -DCUI_TEXT_SHAPING (off, matching upstream's CMake default).
+const cui_sources = blk: {
+    const manifest = @embedFile("vendor/cui/SOURCES.txt");
+    @setEvalBranchQuota(20000);
+    var count: usize = 0;
+    var it = std.mem.tokenizeAny(u8, manifest, "\n");
+    while (it.next()) |line| {
+        if (line.len == 0 or line[0] == '#') continue;
+        count += 1;
+    }
+    var out: [count][]const u8 = undefined;
+    var i: usize = 0;
+    var it2 = std.mem.tokenizeAny(u8, manifest, "\n");
+    while (it2.next()) |line| {
+        if (line.len == 0 or line[0] == '#') continue;
+        out[i] = line;
+        i += 1;
+    }
+    break :blk out;
 };
 
 pub fn build(b: *std.Build) void {
