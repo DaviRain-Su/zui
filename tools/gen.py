@@ -25,6 +25,8 @@ TYPES_MARK = "// ==== GEN:TYPES"
 TYPES_END = "// ==== END GEN:TYPES ===="
 METHODS_MARK = "// ==== GEN:METHODS"
 METHODS_END = "// ==== END GEN:METHODS ===="
+FREE_MARK = "// ==== GEN:FREE"
+FREE_END = "// ==== END GEN:FREE ===="
 
 # ---------------------------------------------------------------- parsing --
 
@@ -361,14 +363,14 @@ COUNT_NAMES = {
     "node_count", "field_count", "column_count", "series_count", "stage_count",
     "span_count", "left_count", "right_count", "link_count", "job_count",
     "env_count", "edge_count", "commit_count", "axis_count", "action_count",
-    "channels", "rows", "cols", "size", "nitems", "nfields",
+    "channels", "rows", "cols", "size", "nitems", "nfields", "stroke_ends",
 }
 
 ZIG_KEYWORDS = {
     "align", "and", "anytype", "as", "break", "catch", "comptime", "const",
     "continue", "defer", "else", "enum", "errdefer", "error", "export",
     "extern", "fn", "for", "if", "inline", "noalias", "or", "orelse",
-    "packed", "pub", "resume", "return", "linksection", "struct", "suspend",
+    "packed", "pub", "resume", "return", "type", "linksection", "struct", "suspend",
     "switch", "test", "threadlocal", "try", "union", "unreachable",
     "usingnamespace", "var", "volatile", "while",
 }
@@ -388,6 +390,11 @@ SCALARS = {
     "cui_id": "u32",
     "cui_texture": "usize",
     "cui_font": "i32",
+    "uint8_t": "u8",
+    "uint16_t": "u16",
+    "int8_t": "i8",
+    "int16_t": "i16",
+    "int64_t": "i64",
 }
 
 # filled at run time
@@ -565,6 +572,10 @@ def value_field_zig(base):
             return ("Size", ".fit")
         if zt == "Color":
             return ("?Color", "null")
+        if zt == "Vec2":
+            return ("Vec2", ".{ .x = 0, .y = 0 }")
+        if zt == "Rect":
+            return ("Rect", ".{ .x = 0, .y = 0, .w = 0, .h = 0 }")
         return (zt, ".{}")
     if base in HAND_ENUMS:
         zt = HAND_ENUMS[base]
@@ -613,9 +624,21 @@ def parse_param(p):
     if base == "char" and stars == 1:
         return ("cstr" if is_const else "buf", base, name)
     if base == "char" and stars == 2 and is_const:
+        if "*const" in p:
+            return ("strarr", base, name)
+        return ("strptrout", base, name)
+    if base == "char" and stars == 3 and is_const:
         return ("strarr", base, name)
     if base == "void" and stars == 1:
         return ("dataptr" if is_const else "voidptr", base, name)
+    if base == "uint8_t" and stars == 1 and is_const:
+        return ("dataptr", base, name)
+    if base == "cui_color" and stars == 1:
+        return ("colorout" if not is_const else "colorarr", base, name)
+    if base == "cui_rect" and stars == 1:
+        return ("rectout" if not is_const else "skip", base, name)
+    if base == "cui_vec2" and stars == 1:
+        return ("vec2arr" if is_const else "vec2out", base, name)
     if base == "float" and stars == 1:
         return ("f32arr" if is_const else "floatout", base, name)
     if base == "double" and stars == 1:
@@ -625,11 +648,7 @@ def parse_param(p):
     if base in ("uint32_t", "unsigned", "unsigned int") and stars == 1 and is_const:
         return ("u32arr", base, name)
     if stars == 1:
-        if base in HAND_STRUCTS:
-            if base == "cui_vec2":
-                return ("vec2arr" if is_const else "vec2out", base, name)
-            return ("skip", base, name)
-        if base in enums_cache:
+        if base in HAND_STRUCTS or base in enums_cache:
             return ("skip", base, name)
         if base in structs_cache:
             return ("mutstruct" if not is_const else "cstructptr", base, name)
@@ -650,37 +669,50 @@ def parse_param(p):
         if base in SCALARS:
             return ("scalar", base, name)
         if base in structs_cache and base not in SKIP_STRUCTS:
-            return ("structin", base, name)
+            return ("structval", base, name)
     return ("skip", base, name)
 
 
 def pair_params(params):
-    parsed = [parse_param(p) for p in params]
+    """Pairs pointer-array parameters with their count. A count attaches to the
+    NEAREST PRECEDING still-unpaired array and becomes its own "countlen"
+    entry at the count's C position, so argument order matches C even when
+    parameters sit between the array and its count."""
+    parsed = [parse_param(p) for p in params if p.strip() != "void"]
     out = []
+    pending = []
     i = 0
     while i < len(parsed):
         kind, base, name = parsed[i]
         nxt = parsed[i + 1] if i + 1 < len(parsed) else None
-        if (
-            kind
-            in ("strarr", "f32arr", "f64arr", "u32arr", "i32arr", "dataptr", "cstructptr", "vec2arr")
-            and nxt
-            and nxt[0] == "scalar"
+        if kind == "cstr" and nxt and nxt[0] == "scalar" and (
+            nxt[2] == "len" or nxt[2] == name + "_len"
         ):
-            candidates = [name + "_count"]
-            if name.endswith("s"):
-                candidates.append(name[:-1] + "_count")
-            if nxt[2] in candidates or nxt[2] in COUNT_NAMES:
-                arrkind = "structarr" if kind == "cstructptr" else kind
-                out.append((arrkind, base, name, nxt))
-                i += 2
-                continue
-        if kind == "cstructptr":
-            out.append(("structin", base, name, None))
+            out.append(("bytes", base, name, nxt))
+            i += 2
+            continue
+        if kind in ("strarr", "f32arr", "f64arr", "u32arr", "i32arr", "dataptr", "vec2arr", "colorarr", "cstructptr", "floatout", "mutstruct", "colorout"):
+            out.append((kind, base, name, None))
+            pending.append(len(out) - 1)
+            i += 1
+            continue
+        if kind == "scalar" and name in COUNT_NAMES and pending:
+            arr_idx = pending[-1]
+            arr_param = out[arr_idx][2]
+            out.append(("countlen", arr_param, name, None))
+            out[arr_idx] = out[arr_idx][:3] + ("linked",)
+            pending = []
             i += 1
             continue
         out.append((kind, base, name, None))
         i += 1
+    for idx, (kind, base, name, extra) in enumerate(out):
+        if extra == "linked":
+            continue
+        if kind == "cstructptr":
+            out[idx] = ("structin", base, name, None)
+        elif kind == "strarr":
+            out[idx] = ("strarrz", base, name, None)
     return out
 
 
@@ -709,17 +741,22 @@ def scope_info(cname, macros, funcs_by_name):
         if mac is None:
             continue
         mb = re.search(r"cui_(\w+?_begin(?:_ex)?)\s*\(", mac)
-        me = re.search(r",\s*cui_(\w+_end)\s*\(", mac)
+        me = re.search(r",\s*(cui_\w+_end)\s*\(", mac)
         if mb and me and ("cui_" + mb.group(1)) == cname:
+            endf = funcs_by_name.get(me.group(1))
+            if endf is not None and endf != 1:
+                return None  # end takes extra arguments: plain begin/end pair
             return {"if": "CUI__SCOPE_IF" in mac, "end": me.group(1)}
     if cname.endswith("_begin") or cname.endswith("_begin_ex"):
         b = re.sub(r"_begin(_ex)?$", "", cname)
-        if b + "_end" in funcs_by_name:
+        endf = funcs_by_name.get(b + "_end")
+        if endf is not None and endf == 1:
             return {"if": False, "end": b + "_end"}
     return None
 
 
 PARAM_RENAMES = {
+    "alpha": "alpha_mult",
     "text": "s",
     "state": "st",
     "c": "color",
@@ -734,6 +771,48 @@ RENAMES = {
 }
 
 
+def mirror_unconvertible(sname):
+    """True when a struct mirror has fields cvtOpts cannot convert (raw or
+    unpaired non-string pointer fields) - such arrays must be passed C-typed."""
+    if sname not in structs_cache:
+        return True
+    pairs, _ = field_slices(structs_cache[sname])
+    for ct, fn_, com in structs_cache[sname]["fields"]:
+        if ct == "raw":
+            return True
+        base0, c0, st0 = base_of(ct)
+        if st0 >= 1 and fn_ not in pairs and base0 != "char":
+            return True
+        if st0 == 0 and base0 in structs_cache and base0 not in SKIP_STRUCTS and mirror_unconvertible(base0):
+            return True
+    return False
+
+
+def mirror_has_complex_fields(sname):
+    """True when converting this struct needs an allocator (free functions
+    have none): any string, pointer or nested-complex field."""
+    if sname not in structs_cache:
+        return True
+    for ct, fn_, com in structs_cache[sname]["fields"]:
+        if ct == "raw":
+            return True
+        base0, c0, st0 = base_of(ct)
+        if st0 >= 1:
+            return True
+        if base0 == "char":
+            return True
+        if base0 in ("cui_size", "cui_color", "cui_rect", "cui_vec2"):
+            continue
+        if base0 in SCALARS or base0 in enums_cache or base0 in HAND_ENUMS:
+            continue
+        if base0 in structs_cache and base0 not in SKIP_STRUCTS:
+            if mirror_has_complex_fields(base0):
+                return True
+            continue
+        return True
+    return False
+
+
 def gen_function(f, macros, reserved):
     cname = f["name"]
     base = cname[4:]
@@ -743,101 +822,141 @@ def gen_function(f, macros, reserved):
     kinds = [p[0] for p in paired]
     if "fnptr" in kinds or "skip" in kinds:
         return None
-
     opts_param = None
     if paired and paired[-1][0] == "structin" and paired[-1][1].endswith("_opts"):
         opts_param = paired[-1]
         paired = paired[:-1]
     if opts_param and struct_kind(opts_param[1]) is None:
         return None
-
     sc = scope_info(cname, macros, all_func_names)
-    is_scope = sc is not None
     zname = method_name(f, sc)
+
+    zig_names = {}
+    for (kind, cbase, pname0, extra) in paired:
+        pn = zig_ident(pname0)
+        if pn in reserved:
+            pn = zig_ident(PARAM_RENAMES.get(pname0, pname0 + "_arg"))
+        zig_names[pname0] = pn
 
     args = []
     sig = []
     pre = []
     post = []
-    for kind, cbase, pname0, cnt in paired:
+    for pi, (kind, cbase, pname0, extra) in enumerate(paired):
         if kind == "ctx":
             continue
-        pname = zig_ident(pname0)
-        if pname in reserved:
-            pname = zig_ident(PARAM_RENAMES.get(pname0, pname0 + "_arg"))
+        pname = zig_names[pname0]
+        loc = "zp%d" % pi
+        linked = extra == "linked"
         if kind == "cstr":
             sig.append(f"{pname}: []const u8")
             args.append(f"self.tmpStr({pname}).ptr")
         elif kind == "buf":
             sig.append(f"{pname}: []u8")
             args.append(f"{pname}.ptr")
-            args.append(f"{pname}.len")
+        elif kind == "bytes":
+            sig.append(f"{pname}: []const u8")
+            args.append(f"{pname}.ptr")
+            args.append(f"@intCast({pname}.len)")
         elif kind == "strarr":
             sig.append(f"{pname}: []const []const u8")
-            pre.append(f"const {pname}_c = self.strArr({pname});")
-            args.append(f"{pname}_c")
-            args.append(f"@intCast({pname}.len)")
-        elif kind == "f32arr":
-            sig.append(f"{pname}: []const f32")
+            pre.append(f"const {loc}_c = self.strArr({pname});")
+            args.append(f"{loc}_c")
+        elif kind == "strarrz":
+            sig.append(f"{pname}: []const []const u8")
+            pre.append(f"const {loc}_c = std.heap.page_allocator.alloc([*c]const u8, {pname}.len + 1) catch @panic(\"zui: oom\");")
+            pre.append(f"defer std.heap.page_allocator.free({loc}_c);")
+            pre.append(f"for ({pname}, 0..) |it, ii| {loc}_c[ii] = @ptrCast(self.tmpStr(it).ptr);")
+            pre.append(f"{loc}_c[{pname}.len] = null;")
+            args.append(f"{loc}_c.ptr")
+        elif kind in ("f32arr", "f64arr", "u32arr", "i32arr"):
+            zt2 = {"f32arr": "f32", "f64arr": "f64", "u32arr": "u32", "i32arr": "i32"}[kind]
+            sig.append(f"{pname}: []const {zt2}")
             args.append(f"{pname}.ptr")
-            args.append(f"@intCast({pname}.len)")
-        elif kind == "f64arr":
-            sig.append(f"{pname}: []const f64")
-            args.append(f"{pname}.ptr")
-            args.append(f"@intCast({pname}.len)")
-        elif kind == "u32arr":
-            sig.append(f"{pname}: []const u32")
-            args.append(f"{pname}.ptr")
-            args.append(f"@intCast({pname}.len)")
-        elif kind == "i32arr":
-            sig.append(f"{pname}: []const i32")
-            args.append(f"{pname}.ptr")
-            args.append(f"@intCast({pname}.len)")
-        elif kind == "vec2arr":
-            sig.append(f"{pname}: []const Vec2")
-            pre.append(f"const {pname}_c = self.arena.allocator().alloc(c.cui_vec2, {pname}.len) catch @panic(\"zui: oom\");")
-            pre.append(f"for ({pname}, 0..) |pt, pi| {pname}_c[pi] = vecToC(pt);")
-            args.append(f"{pname}_c.ptr")
-            args.append(f"@intCast({pname}.len)")
         elif kind == "dataptr":
             sig.append(f"{pname}: []const u8")
             args.append(f"{pname}.ptr")
-            args.append(f"{pname}.len")
-        elif kind == "structarr":
+        elif kind == "vec2arr":
+            sig.append(f"{pname}: []const Vec2")
+            pre.append(f"const {loc}_c = self.arena.allocator().alloc(c.cui_vec2, {pname}.len) catch @panic(\"zui: oom\");")
+            pre.append(f"for ({pname}, 0..) |pt, vpi| {loc}_c[vpi] = vecToC(pt);")
+            args.append(f"{loc}_c.ptr")
+        elif kind == "colorarr":
+            sig.append(f"{pname}: []const Color")
+            pre.append(f"const {loc}_c = self.arena.allocator().alloc(c.cui_color, {pname}.len) catch @panic(\"zui: oom\");")
+            pre.append(f"for ({pname}, 0..) |cc, ci| {loc}_c[ci] = cc.toC();")
+            args.append(f"{loc}_c.ptr")
+        elif kind == "cstructptr" or kind == "structarr":
             zt = struct_kind(cbase)
             if zt is None:
                 return None
-            sig.append(f"{pname}: []const {zt}")
-            pre.append(f"const {pname}_c = self.structArr(c.{cbase}, {pname});")
-            args.append(f"{pname}_c")
-            args.append(f"@intCast({pname}.len)")
+            if mirror_unconvertible(cbase):
+                sig.append(f"{pname}: []const c.{cbase}")
+                args.append(f"@ptrCast({pname}.ptr)")
+            else:
+                sig.append(f"{pname}: []const {zt}")
+                pre.append(f"const {loc}_c = self.structArr(c.{cbase}, {pname});")
+                args.append(f"{loc}_c")
         elif kind == "mutstruct":
-            sig.append(f"{pname}: *c.{cbase}")
-            args.append(f"@ptrCast({pname})")
-        elif kind == "structin":
-            zt = struct_kind(cbase)
-            if zt is None:
-                return None
-            sig.append(f"{pname}: {zt}")
-            pre.append(f"const {pname}_c = self.cvtOpts(c.{cbase}, {pname});")
-            args.append(f"&{pname}_c")
+            if linked:
+                sig.append(f"{pname}: []c.{cbase}")
+                args.append(f"@ptrCast({pname}.ptr)")
+            else:
+                sig.append(f"{pname}: *c.{cbase}")
+                args.append(f"@ptrCast({pname})")
         elif kind == "floatout":
-            sig.append(f"{pname}: *f32")
-            args.append(f"@ptrCast({pname})")
+            if linked:
+                sig.append(f"{pname}: []f32")
+                args.append(f"@ptrCast({pname}.ptr)")
+            else:
+                sig.append(f"{pname}: *f32")
+                args.append(f"@ptrCast({pname})")
         elif kind == "doubleout":
             sig.append(f"{pname}: *f64")
             args.append(f"@ptrCast({pname})")
         elif kind == "intout":
             sig.append(f"{pname}: *i32")
             args.append(f"@ptrCast({pname})")
+        elif kind.endswith("out") and kind not in ("floatout", "doubleout", "intout", "boolout", "vec2out", "colorout", "strptrout", "dataptr"):
+            zt3 = SCALARS.get(kind[:-3], "i32")
+            sig.append(f"{pname}: *{zt3}")
+            args.append(f"@ptrCast({pname})")
         elif kind == "boolout":
             sig.append(f"{pname}: *bool")
             args.append(f"{pname}")
+        elif kind == "colorout":
+            if linked:
+                sig.append(f"{pname}: []Color")
+                args.append(f"@ptrCast({pname}.ptr)")
+            else:
+                sig.append(f"{pname}: *Color")
+                pre.append(f"var {loc}_c: c.cui_color = colorToC({pname}.*);")
+                args.append(f"&{loc}_c")
+                post.append(f"{pname}.* = colorFromC({loc}_c);")
+        elif kind == "mutcolorarr":
+            sig.append(f"{pname}: []Color")
+            args.append(f"@ptrCast({pname}.ptr)")
+        elif kind == "mutf32arr":
+            sig.append(f"{pname}: []f32")
+            args.append(f"@ptrCast({pname}.ptr)")
+        elif kind == "mutstructarr":
+            sig.append(f"{pname}: []c.{cbase}")
+            args.append(f"@ptrCast({pname}.ptr)")
+        elif kind == "rectout":
+            sig.append(f"{pname}: *Rect")
+            pre.append(f"var {loc}_c: c.cui_rect = rectToC({pname}.*);")
+            args.append(f"&{loc}_c")
+            post.append(f"{pname}.* = rectFromC({loc}_c);")
         elif kind == "vec2out":
             sig.append(f"{pname}: *Vec2")
-            pre.append(f"var {pname}_c: c.cui_vec2 = std.mem.zeroes(c.cui_vec2);")
-            args.append(f"&{pname}_c")
-            post.append(f"{pname}.* = .{{ .x = {pname}_c.x, .y = {pname}_c.y }};")
+            pre.append(f"var {loc}_c: c.cui_vec2 = std.mem.zeroes(c.cui_vec2);")
+            args.append(f"&{loc}_c")
+            post.append(f"{pname}.* = .{{ .x = {loc}_c.x, .y = {loc}_c.y }};")
+        elif kind == "strptrout":
+            sig.append(f"{pname}: ?*?[]const u8")
+            pre.append(f"var {loc}_c: [*c]const u8 = null;")
+            args.append(f"&{loc}_c")
+            post.append(f"if ({pname}) |p| p.* = spanOrEmpty({loc}_c);")
         elif kind == "voidptr":
             sig.append(f"{pname}: ?*anyopaque")
             args.append(f"{pname}")
@@ -847,23 +966,33 @@ def gen_function(f, macros, reserved):
             args.append(f"enumOrInt(c.{cbase}, {pname})")
         elif kind == "size":
             sig.append(f"{pname}: Size")
-            pre.append(f"const {pname}_c = {pname}.toC();")
-            args.append(f"&{pname}_c")
+            pre.append(f"const {loc}_c = {pname}.toC();")
+            args.append(f"{loc}_c")
         elif kind == "color":
             sig.append(f"{pname}: Color")
             args.append(f"colorToC({pname})")
         elif kind == "rect":
             sig.append(f"{pname}: Rect")
-            pre.append(f"const {pname}_c = rectToC({pname});")
-            args.append(f"&{pname}_c")
+            pre.append(f"const {loc}_c = rectToC({pname});")
+            args.append(f"{loc}_c")
         elif kind == "vec2":
             sig.append(f"{pname}: Vec2")
-            pre.append(f"const {pname}_c = vecToC({pname});")
-            args.append(f"&{pname}_c")
+            pre.append(f"const {loc}_c = vecToC({pname});")
+            args.append(f"{loc}_c")
+        elif kind == "countlen":
+            args.append(f"@intCast({zig_names[cbase]}.len)")
+        elif kind == "structval":
+            if mirror_has_complex_fields(cbase):
+                return None
+            sig.append(f"{pname}: {struct_kind(cbase)}")
+            pre.append(f"const {loc}_c = cvtFree(c.{cbase}, {pname});")
+            args.append(f"{loc}_c")
         elif kind == "scalar":
             zt = SCALARS.get(cbase, "i32")
             sig.append(f"{pname}: {zt}")
             args.append(pname)
+        else:
+            return None
 
     if opts_param:
         optstype = struct_kind(opts_param[1])
@@ -874,16 +1003,18 @@ def gen_function(f, macros, reserved):
     ret = f["ret"].strip()
     rbase, ris_const, rstars = base_of(ret)
     zret = "void"
-    ret_wrap = None  # function applied around the call expression
+    ret_wrap = None
     if rstars == 1 and rbase == "char":
         zret = "[]const u8"
         ret_wrap = "spanOrEmpty"
+    elif rstars == 1 and rbase in structs_cache and rbase not in SKIP_STRUCTS:
+        zret = ("?*const c." if ris_const else "?*c.") + rbase
     elif rstars == 0:
         if rbase == "void":
             zret = "void"
         elif rbase == "bool":
             zret = "bool"
-        elif rbase in SCALARS and rstars == 0:
+        elif rbase in SCALARS:
             zret = SCALARS[rbase]
         elif rbase == "cui_color":
             zret = "Color"
@@ -894,7 +1025,7 @@ def gen_function(f, macros, reserved):
         elif rbase == "cui_rect":
             zret = "Rect"
             ret_wrap = "rectFromC"
-        elif rbase in structs_cache and rbase not in SKIP_STRUCTS and not ris_const:
+        elif rbase in structs_cache and rbase not in SKIP_STRUCTS:
             zret = struct_kind(rbase)
             ret_wrap = "STRUCT:" + rbase
         elif rbase in HAND_ENUMS or rbase in enums_cache:
@@ -905,7 +1036,7 @@ def gen_function(f, macros, reserved):
     else:
         return None
 
-    if is_scope:
+    if sc is not None:
         zret = "bool" if sc["if"] else "void"
         ret_wrap = None
 
@@ -917,18 +1048,19 @@ def gen_function(f, macros, reserved):
     for line in pre:
         body.append("    " + line)
     call = "c.%s(self.h%s)" % (cname, (", " + ", ".join(args)) if args else "")
-    if is_scope:
+    if sc is not None:
+        adapter = "zui_end_adapter_" + sc["end"][4:]
         if sc["if"]:
             body.append(f"    if (!({call})) return false;")
-            body.append(f"    self.pushEnd(c.cui_{sc['end']});")
+            body.append(f"    self.pushEnd({adapter});")
             body.append("    return true;")
         else:
-            body.append(f"    self.pushEnd(c.cui_{sc['end']});")
+            body.append(f"    self.pushEnd({adapter});")
             body.append((f"{call};") if rbase == "void" else f"_ = {call};")
+    elif zret == "void":
+        body.append(f"    {call};")
     elif ret_wrap is None:
-        if zret == "void":
-            body.append(f"    {call};")
-        elif post:
+        if post:
             body.append(f"    const result = {call};")
             for line in post:
                 body.append("    " + line)
@@ -936,8 +1068,217 @@ def gen_function(f, macros, reserved):
         else:
             body.append(f"    return {call};")
     elif isinstance(ret_wrap, str) and ret_wrap.startswith("STRUCT:"):
-        sname = ret_wrap[len("STRUCT:") :]
-        body.append(f"    return cvtBackStruct({struct_kind(sname)}, {call});")
+        body.append(f"    return cvtBackStruct({struct_kind(ret_wrap[7:])}, {call});")
+    elif ret_wrap == "ENUMFROMINT":
+        body.append(f"    return @enumFromInt(enumToInt({call}));")
+    else:
+        body.append(f"    return {ret_wrap}({call});")
+    body.append("}")
+    return "\n".join(body) + "\n"
+
+
+def gen_free_function(f):
+    cname = f["name"]
+    base = cname[4:]
+    if base.endswith("_ex"):
+        base = base[:-3]
+    zname = RENAMES.get(base, base)
+    if zname in taken_names:
+        return None
+    paired = pair_params(f["params"])
+    kinds = [p[0] for p in paired]
+    if "fnptr" in kinds or "skip" in kinds:
+        return None
+
+    zig_names = {}
+    for (kind, cbase, pname0, extra) in paired:
+        pn = zig_ident(pname0)
+        if pn in reserved_free:
+            pn = zig_ident(PARAM_RENAMES.get(pname0, pname0 + "_arg"))
+        zig_names[pname0] = pn
+
+    args = []
+    sig = []
+    pre = []
+    post = []
+    for pi, (kind, cbase, pname0, extra) in enumerate(paired):
+        pname = zig_names[pname0]
+        loc = "zp%d" % pi
+        linked = extra == "linked"
+        if kind == "cstr":
+            sig.append(f"{pname}: [:0]const u8")
+            args.append(f"{pname}.ptr")
+        elif kind == "buf":
+            sig.append(f"{pname}: [:0]u8" if extra is None else f"{pname}: []u8")
+            args.append(f"{pname}.ptr")
+        elif kind == "bytes":
+            sig.append(f"{pname}: []const u8")
+            args.append(f"{pname}.ptr")
+            args.append(f"@intCast({pname}.len)")
+        elif kind == "dataptr":
+            sig.append(f"{pname}: []const u8")
+            args.append(f"{pname}.ptr")
+        elif kind == "strarr" or kind == "strarrz":
+            sig.append(f"{pname}: []const []const u8")
+            pre.append(f"var {loc}_total: usize = 0;")
+            pre.append(f"for ({pname}) |v| {loc}_total += v.len + 1;")
+            pre.append(f"const {loc}_blob = std.heap.page_allocator.alloc(u8, {loc}_total + 1) catch @panic(\"zui: oom\");")
+            pre.append(f"defer std.heap.page_allocator.free({loc}_blob);")
+            pre.append(f"const {loc}_c = std.heap.page_allocator.alloc([*c]const u8, {pname}.len + 1) catch @panic(\"zui: oom\");")
+            pre.append(f"defer std.heap.page_allocator.free({loc}_c);")
+            pre.append(f"var {loc}_off: usize = 0;")
+            pre.append(f"for ({pname}, 0..) |v, ii| {{")
+            pre.append(f"    @memcpy({loc}_blob[{loc}_off..{loc}_off + v.len], v);")
+            pre.append(f"    {loc}_blob[{loc}_off + v.len] = 0;")
+            pre.append(f"    {loc}_c[ii] = @ptrCast({loc}_blob[{loc}_off..{loc}_off + v.len :0].ptr);")
+            pre.append(f"    {loc}_off += v.len + 1;")
+            pre.append(f"}}")
+            pre.append(f"{loc}_c[{pname}.len] = null;")
+            args.append(f"{loc}_c.ptr")
+        elif kind in ("f32arr", "f64arr", "u32arr", "i32arr"):
+            zt2 = {"f32arr": "f32", "f64arr": "f64", "u32arr": "u32", "i32arr": "i32"}[kind]
+            sig.append(f"{pname}: []const {zt2}")
+            args.append(f"{pname}.ptr")
+        elif kind == "vec2arr":
+            sig.append(f"{pname}: []const Vec2")
+            pre.append(f"const {loc}_c = std.heap.page_allocator.alloc(c.cui_vec2, {pname}.len) catch @panic(\"zui: oom\");")
+            pre.append(f"defer std.heap.page_allocator.free({loc}_c);")
+            pre.append(f"for ({pname}, 0..) |pt, vpi| {loc}_c[vpi] = vecToC(pt);")
+            args.append(f"{loc}_c.ptr")
+        elif kind == "structarr" or kind == "cstructptr":
+            if mirror_has_complex_fields(cbase):
+                sig.append(f"{pname}: []const c.{cbase}")
+                args.append(f"@ptrCast({pname}.ptr)")
+            else:
+                sig.append(f"{pname}: []const {struct_kind(cbase)}")
+                pre.append(f"const {loc}_c = std.heap.page_allocator.alloc(c.{cbase}, {pname}.len) catch @panic(\"zui: oom\");")
+                pre.append(f"defer std.heap.page_allocator.free({loc}_c);")
+                pre.append(f"for ({pname}, 0..) |*it, ii| {loc}_c[ii] = cvtFree(c.{cbase}, it.*);")
+                args.append(f"{loc}_c.ptr")
+        elif kind == "mutstruct":
+            if linked:
+                sig.append(f"{pname}: []c.{cbase}")
+                args.append(f"@ptrCast({pname}.ptr)")
+            else:
+                sig.append(f"{pname}: *c.{cbase}")
+                args.append(f"@ptrCast({pname})")
+        elif kind == "floatout":
+            if linked:
+                sig.append(f"{pname}: []f32")
+                args.append(f"@ptrCast({pname}.ptr)")
+            else:
+                sig.append(f"{pname}: *f32")
+                args.append(f"@ptrCast({pname})")
+        elif kind == "intout":
+            sig.append(f"{pname}: *i32")
+            args.append(f"@ptrCast({pname})")
+        elif kind.endswith("out") and kind not in ("floatout", "doubleout", "intout", "boolout", "vec2out", "colorout", "strptrout", "dataptr"):
+            zt3 = SCALARS.get(kind[:-3], "i32")
+            sig.append(f"{pname}: *{zt3}")
+            args.append(f"@ptrCast({pname})")
+        elif kind == "colorout":
+            if linked:
+                sig.append(f"{pname}: []Color")
+                args.append(f"@ptrCast({pname}.ptr)")
+            else:
+                sig.append(f"{pname}: *Color")
+                pre.append(f"var {loc}_c: c.cui_color = colorToC({pname}.*);")
+                args.append(f"&{loc}_c")
+                post.append(f"{pname}.* = colorFromC({loc}_c);")
+        elif kind == "voidptr":
+            sig.append(f"{pname}: ?*anyopaque")
+            args.append(f"{pname}")
+        elif kind == "enum":
+            zt = HAND_ENUMS.get(cbase) or camel(cbase)
+            sig.append(f"{pname}: {zt}")
+            args.append(f"enumOrInt(c.{cbase}, {pname})")
+        elif kind == "color":
+            sig.append(f"{pname}: Color")
+            args.append(f"colorToC({pname})")
+        elif kind == "vec2":
+            sig.append(f"{pname}: Vec2")
+            pre.append(f"const {loc}_c = vecToC({pname});")
+            args.append(f"{loc}_c")
+        elif kind == "rect":
+            sig.append(f"{pname}: Rect")
+            pre.append(f"const {loc}_c = rectToC({pname});")
+            args.append(f"{loc}_c")
+        elif kind == "size":
+            sig.append(f"{pname}: Size")
+            pre.append(f"const {loc}_c = {pname}.toC();")
+            args.append(f"{loc}_c")
+        elif kind == "countlen":
+            args.append(f"@intCast({zig_names[cbase]}.len)")
+        elif kind == "structval":
+            if mirror_has_complex_fields(cbase):
+                return None
+            sig.append(f"{pname}: {struct_kind(cbase)}")
+            pre.append(f"const {loc}_c = cvtFree(c.{cbase}, {pname});")
+            args.append(f"{loc}_c")
+        elif kind == "scalar":
+            sig.append(f"{pname}: {SCALARS.get(cbase, 'i32')}")
+            args.append(pname)
+        else:
+            return None
+
+    ret = f["ret"].strip()
+    rbase, ris_const, rstars = base_of(ret)
+    zret = "void"
+    ret_wrap = None
+    if rstars == 1 and rbase == "char":
+        zret = "[]const u8"
+        ret_wrap = "spanOrEmpty"
+    elif rstars == 1 and rbase in structs_cache and rbase not in SKIP_STRUCTS:
+        zret = ("?*const c." if ris_const else "?*c.") + rbase
+    elif rstars == 0:
+        if rbase == "void":
+            zret = "void"
+        elif rbase == "bool":
+            zret = "bool"
+        elif rbase in SCALARS:
+            zret = SCALARS[rbase]
+        elif rbase == "cui_color":
+            zret = "Color"
+            ret_wrap = "colorFromC"
+        elif rbase == "cui_vec2":
+            zret = "Vec2"
+            ret_wrap = "vecFromC"
+        elif rbase == "cui_rect":
+            zret = "Rect"
+            ret_wrap = "rectFromC"
+        elif rbase in structs_cache and rbase not in SKIP_STRUCTS:
+            if mirror_has_complex_fields(rbase):
+                return None
+            zret = struct_kind(rbase)
+            ret_wrap = "STRUCT:" + rbase
+        elif rbase in HAND_ENUMS or rbase in enums_cache:
+            zret = HAND_ENUMS.get(rbase) or camel(rbase)
+            ret_wrap = "ENUMFROMINT"
+        else:
+            return None
+    else:
+        return None
+
+    body = []
+    if f["doc"]:
+        body.append("/// " + f["doc"].replace("\n", "\n/// "))
+    sig_s = (", ".join(sig)) if sig else ""
+    body.append(f"pub fn {zname}({sig_s}) {zret} {{")
+    for line in pre:
+        body.append("    " + line)
+    call = "c.%s(%s)" % (cname, ", ".join(args))
+    if zret == "void":
+        body.append(f"    {call};")
+    elif ret_wrap is None:
+        if post:
+            body.append(f"    const result = {call};")
+            for line in post:
+                body.append("    " + line)
+            body.append("    return result;")
+        else:
+            body.append(f"    return {call};")
+    elif isinstance(ret_wrap, str) and ret_wrap.startswith("STRUCT:"):
+        body.append(f"    return cvtBackStruct({struct_kind(ret_wrap[7:])}, {call});")
     elif ret_wrap == "ENUMFROMINT":
         body.append(f"    return @enumFromInt(enumToInt({call}));")
     else:
@@ -947,11 +1288,12 @@ def gen_function(f, macros, reserved):
 
 
 def main():
+    global taken_names, reserved_free
     global enums_cache, structs_cache, all_func_names
     structs, enums, funcs, macros = parse_header(HEADER)
     enums_cache = enums
     structs_cache = structs
-    all_func_names = {f["name"] for f in funcs}
+    all_func_names = {f["name"]: len(f["params"]) for f in funcs}
 
     type_lines = []
     for cname in sorted(enums):
@@ -1006,6 +1348,26 @@ def main():
         if rs == 0 and rb in structs:
             mark_struct(rb)
 
+    # also mark structs referenced by free (non-ctx) functions
+    for f in funcs:
+        if f["name"] in SKIP_FUNCS:
+            continue
+        if f["params"] and "cui_ctx" in f["params"][0]:
+            continue
+        if "..." in " ".join(f["params"]):
+            continue
+        for p in f["params"]:
+            mm = re.match(r"^(.*?)(\**)?\s*(\w+)$", p.strip())
+            if mm:
+                b2, is_c2, st2 = base_of(mm.group(1) + (mm.group(2) or ""))
+                if st2 >= 1 and b2 in structs:
+                    mark_struct(b2)
+                elif st2 == 0 and b2 in structs:
+                    mark_struct(b2)
+        rb, rc, rs = base_of(f["ret"])
+        if rb in structs:
+            mark_struct(rb)
+
     for sname in sorted(used):
         type_lines.append(gen_struct(sname, structs[sname]))
 
@@ -1025,9 +1387,9 @@ def main():
     for f in funcs:
         if not eligible(f):
             continue
-        sc = scope_info(f["name"], macros, {x["name"] for x in funcs})
+        sc = scope_info(f["name"], macros, all_func_names)
         if sc:
-            consumed_ends.add("cui_" + sc["end"])
+            consumed_ends.add(sc["end"])
         method_names.add(method_name(f, sc))
     reserved = hand_names | method_names | {"opts", "self", "end", "c", "std", "raw", "icon", "zui"}
 
@@ -1050,6 +1412,57 @@ def main():
             continue
         emitted.add(name)
         method_lines.append(code)
+
+    # free (non-ctx) utility functions --------------------------------------
+    zx = open(ZIG).read()
+    for mark, endm in ((TYPES_MARK, TYPES_END), (METHODS_MARK, METHODS_END), (FREE_MARK, FREE_END)):
+        a = zx.find(mark)
+        b = zx.find(endm, a)
+        if a != -1 and b != -1:
+            zx = zx[:a] + zx[b:]
+    taken_names = set(re.findall(r"^(?:pub )?(?:const|fn) (\w+)", zx, re.M))
+    taken_names |= set(re.findall(r"^    pub fn (\w+)\(", zx, re.M))
+    reserved_free = {"opts", "self", "end", "c", "std", "raw", "icon", "zui"}
+
+    # mark structs referenced by free functions (before types are emitted?
+    # types_code was built earlier, so mark free structs and rebuild below)
+
+    free_names = set()
+    for f in funcs:
+        if f["name"] in SKIP_FUNCS:
+            continue
+        if f["params"] and "cui_ctx" in f["params"][0]:
+            continue
+        if "..." in " ".join(f["params"]):
+            continue
+        base = f["name"][4:]
+        if base.endswith("_ex"):
+            base = base[:-3]
+        free_names.add(RENAMES.get(base, base))
+    reserved_free |= free_names
+
+    # void adapters for scope ends (some return values)
+    adapter_lines = []
+    for end_name in sorted(consumed_ends):
+        zname_a = "zui_end_adapter_" + end_name[4:]
+        adapter_lines.append(
+            'fn ' + zname_a + '(h: ?*c.cui_ctx) callconv(.c) void {\n    _ = c.' + end_name + '(h);\n}\n'
+        )
+
+    free_lines = []
+    n_free_skipped = 0
+    for f in funcs:
+        if f["name"] in SKIP_FUNCS:
+            continue
+        if f["params"] and "cui_ctx" in f["params"][0]:
+            continue
+        if "..." in " ".join(f["params"]):
+            continue
+        code = gen_free_function(f)
+        if code is None:
+            n_free_skipped += 1
+            continue
+        free_lines.append(code)
 
     types_code = (
         "// Generated enums and struct mirrors. Field names match the C structs;\n"
@@ -1074,10 +1487,11 @@ def main():
 
     ztext = splice(ztext, TYPES_MARK, TYPES_END, types_code)
     ztext = splice(ztext, METHODS_MARK, METHODS_END, methods_code)
+    ztext = splice(ztext, FREE_MARK, FREE_END, "\n\n".join(adapter_lines + free_lines))
     with open(ZIG, "w") as zf:
         zf.write(ztext)
 
-    print(f"generated {len(type_lines)} type blocks, {len(method_lines)} methods, {n_skipped} functions skipped")
+    print(f"generated {len(type_lines)} type blocks, {len(method_lines)} methods, {len(free_lines)} free functions, {n_skipped + n_free_skipped} skipped")
 
 
 if __name__ == "__main__":

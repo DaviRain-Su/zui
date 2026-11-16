@@ -119,22 +119,31 @@ echo '<commit>' > ../zui/vendor/cui/VENDOR.txt
 
 ## Status
 
-The wrapper covers the whole `cui_ctx` component surface. The hand-written
-core (layout, text, buttons, inputs, app lifecycle, headless rendering) has
-curated Zig-native types; everything else is **generated** by `tools/gen.py`
-from the vendored header (~356 methods, opts structs with defaults, enums,
-begin/end pairs as scopes, `const char *const *` as `[]const []const u8`,
-pointer+count pairs folded into slices). Regenerate after updating the
-vendored CUI:
+The wrapper covers the whole public surface. The hand-written core (layout,
+text, buttons, inputs, app lifecycle, headless rendering) has curated
+Zig-native types; everything else is **generated** by `tools/gen.py` from the
+vendored header into the marked regions of `src/zui.zig`:
+
+* ~345 component methods — opts structs with zero-defaults, enums,
+  begin/end pairs as scopes (`defer ui.end()`), `CUI__SCOPE_IF` ones
+  returning bool, `const char *const *` as `[]const []const u8`,
+  pointer+count pairs folded into slices, in-out struct/color/rect
+  parameters passed through layout-compatible types,
+* ~31 free utility functions (color math, dates, diff/regex/cron/http
+  helpers, log and terminal buffers) — no `ui` needed,
+* void adapters so scope ends may return values.
+
+Only what cannot be typed from Zig stays behind `zui.raw.*`: the variadic
+`cui_textf` family (use `ui.textf`), `cui_fs_list`/`cui_tree_sort`
+callbacks, and a handful of functions whose results are C-owned pointer
+arrays. Regenerate after updating the vendored CUI:
 
 ```sh
 python3 tools/gen.py && zig build test
 ```
 
-Only what cannot be typed from Zig stays behind `zui.raw.*`: the callback
-APIs (`cui_canvas` paint, `cui_state_on_free`, `cui_tree_sort`), the variadic
-`cui_textf` family (use `ui.textf`), the renderer interfaces, and app-layer
-extras that duplicate what `App` already wraps.
+A test forces semantic analysis of every generated declaration and another
+clicks a button headless, so generator regressions fail the build.
 
 ## License
 

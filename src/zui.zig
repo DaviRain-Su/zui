@@ -79,18 +79,20 @@ fn setSizeKind(v: *c.cui_size, kind: SizeKind, value: f32) void {
     v.value = value;
 }
 
-/// C `cui_color` { r, g, b, a }.
-pub const Color = struct {
+/// C `cui_color` { r, g, b, a } (extern: layout-compatible with the C
+/// struct, so `[]Color` can be passed to C functions writing in place).
+pub const Color = extern struct {
     r: u8,
     g: u8,
     b: u8,
-    a: u8 = 255,
+    a: u8,
 
     pub fn rgb(hex: u32) Color {
         return .{
             .r = @truncate(hex >> 16),
             .g = @truncate(hex >> 8),
             .b = @truncate(hex),
+            .a = 255,
         };
     }
 
@@ -150,11 +152,11 @@ pub const icon = struct {
     pub const copy = "\xee\x82\x9e";
 };
 
-/// C `cui_rect`.
-pub const Rect = struct { x: f32, y: f32, w: f32, h: f32 };
+/// C `cui_rect` (extern: layout-compatible with the C struct).
+pub const Rect = extern struct { x: f32, y: f32, w: f32, h: f32 };
 
-/// C `cui_vec2`.
-pub const Vec2 = struct { x: f32, y: f32 };
+/// C `cui_vec2` (extern: layout-compatible with the C struct).
+pub const Vec2 = extern struct { x: f32, y: f32 };
 
 pub const MouseButton = enum(c_int) { left = 0, right, middle };
 
@@ -808,7 +810,7 @@ pub const ApiExplorerResult = struct {
 pub const ApiParam = struct {
     name: ?[]const u8 = null,  // the parameter's name, in the code font
     in: ?[]const u8 = null,  // where it goes: "path", "query", "header" or "body"
-    type: ?[]const u8 = null,  // e.g. "string"; shown before where it goes
+    @"type": ?[]const u8 = null,  // e.g. "string"; shown before where it goes
     required: bool = false,  // a red asterisk after the name
     description: ?[]const u8 = null,  // what the parameter is for, shown after its type and place; may be `NULL`
 };
@@ -880,14 +882,14 @@ pub const BlameCommit = struct {
     hash: ?[]const u8 = null,  // the commit id; its first 7 characters are shown
     author: ?[]const u8 = null,  // shown in the gutter; on a phone as initials
     summary: ?[]const u8 = null,  // the commit's message line, shown in the gutter's tooltip
-    // `time` (int64_t): unsupported field type, reach it via zui.raw
+    time: i64 = 0,  // Unix seconds
 };
 
 pub const BlameOpts = struct {
     width: Size = .fit,
     height: f32 = 0,  // default 360
     lang: ?[]const u8 = null,  // highlights the code, as the code block
-    // `now` (int64_t): unsupported field type, reach it via zui.raw
+    now: i64 = 0,  // ages are counted to here; 0: the clock
     first_line: i32 = 0,  // number of the first line, default 1
 };
 
@@ -936,18 +938,18 @@ pub const CandlestickOpts = struct {
 
 pub const CanvasControlsOpts = struct {
     steps: []const f32 = &.{},  // zoom presets, ascending; `NULL`: 0.25 0.33 0.5 0.67 0.8 1 1.25 1.5 2 3 4
-    content: Rect = .{},  // the content's bounds in canvas points, for fit; empty: fit is only reported
+    content: Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 },  // the content's bounds in canvas points, for fit; empty: fit is only reported
     toggles: []const CanvasToggle = &.{},
     no_fit: bool = false,  // leaves out the fit button
     start_side: bool = false,  // the rail sits at the start edge (left, or right in a right-to-left interface)
 };
 
 pub const CanvasResult = struct {
-    rect: Rect = .{},
+    rect: Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 },
     hovered: bool = false,
     pressed: bool = false,
     clicked: bool = false,
-    mouse: Vec2 = .{},
+    mouse: Vec2 = .{ .x = 0, .y = 0 },
 };
 
 /// C `cui_canvas_toggle` — Canvas controls: a floating rail of zoom controls over the previous component,
@@ -1272,6 +1274,16 @@ pub const CropperOpts = struct {
     min_size: f32 = 0,  // smallest side, image pixels; default 16
 };
 
+pub const CurveKey = struct {
+    x: f32 = 0,  // position along the horizontal axis, in curve units (seconds in a timeline track)
+    y: f32 = 0,  // the curve's value at the key
+    in_dx: f32 = 0,  // handle toward the previous key, relative to the key (FREE)
+    in_dy: f32 = 0,  // handle toward the previous key, relative to the key (FREE)
+    out_dx: f32 = 0,  // handle toward the next key, relative to the key (FREE)
+    out_dy: f32 = 0,  // handle toward the next key, relative to the key (FREE)
+    mode: u8 = 0,  // cui_curve_mode
+};
+
 pub const CurveOpts = struct {
     x_min: f32 = 0,  // plotted range; both 0 = 0..1. Keys stay inside it
     x_max: f32 = 0,  // plotted range; both 0 = 0..1. Keys stay inside it
@@ -1340,6 +1352,18 @@ pub const DialogOpts = struct {
     resizable: bool = false,  // the edges and corners resize it, down to a minimum size; the content is clipped when it no longer fits
 };
 
+/// C `cui_diff_hunk` — The same diff without a view. Old lines [old_start, old_start + old_count)
+/// became new lines [new_start, new_start + new_count), 0 based; a pure
+/// insertion has old_count 0 and goes before old line old_start. Writes up to
+/// cap hunks and returns how many there are (-1 when out of memory). Lines end
+/// at "\n"; a "\r" before it is part of the line ending. Allocates with malloc.
+pub const DiffHunk = struct {
+    old_start: i32 = 0,
+    old_count: i32 = 0,
+    new_start: i32 = 0,
+    new_count: i32 = 0,
+};
+
 pub const DiffOpts = struct {
     mode: DiffMode = .split,
     language: ?[]const u8 = null,  // syntax colors, as cui_code_block: "c", "js", "python", ...
@@ -1355,6 +1379,14 @@ pub const DiffOpts = struct {
     size: f32 = 0,  // font size, default 12
 };
 
+/// C `cui_diff_range` — Word marks between two versions of one line, as byte ranges (a length of -1
+/// reads up to the terminator). Returns false when the lines have too little in
+/// common for marks to help, or a line is very long (over 2000 bytes).
+pub const DiffRange = struct {
+    start: i32 = 0,
+    length: i32 = 0,
+};
+
 pub const DiffResult = struct {
     added: i32 = 0,  // lines
     removed: i32 = 0,  // lines
@@ -1366,6 +1398,15 @@ pub const DiffResult = struct {
     hidden: i32 = 0,  // folded rows shown, and the unchanged lines they hide
     recomputed: bool = false,  // a text changed and was diffed this frame
     approximate: bool = false,  // the search hit its limit: correct, maybe not the shortest
+};
+
+pub const DiffStats = struct {
+    added: i32 = 0,
+    removed: i32 = 0,
+    hunks: i32 = 0,
+    old_lines: i32 = 0,
+    new_lines: i32 = 0,
+    approximate: bool = false,
 };
 
 /// C `cui_doc_tab` — Document tabs: editor style tabs. Clicking selects (*selected is
@@ -1945,7 +1986,7 @@ pub const HexResult = struct {
     edited: bool = false,  // bytes in .edit were overwritten this frame
     edit_offset: usize = 0,  // with `edited`: offset of the first byte overwritten this frame
     edit_length: usize = 0,  // with `edited`: bytes from `edit_offset` up to the last one overwritten
-    // `hovered` (int64_t): unsupported field type, reach it via zui.raw
+    hovered: i64 = 0,  // byte under the pointer, or -1
     copied: bool = false,  // Ctrl+C or Ctrl+Shift+C put the selection on the clipboard
 };
 
@@ -2134,6 +2175,26 @@ pub const KvEditorOpts = struct {
     width: Size = .fit,  // default fill
 };
 
+/// C `cui_kv_pair` — ------------------------------------------------------------------------
+/// Developer tools
+/// ------------------------------------------------------------------------
+/// ---- Key-value editor ----
+/// Rows of key = value pairs: HTTP headers, query parameters, environment
+/// variables. You own the array and it is edited in place. The checkbox turns
+/// a pair on or off, typing in the empty row at the end adds a pair, the x
+/// removes one. Secret values show as dots with an eye to reveal them. A key
+/// used twice, or one with a space, is marked. On a phone each key sits above
+/// its value. Returns true when anything changed.
+/// static cui_kv_pair headers[16] = { { "Accept", "application/json", true } };
+/// static int n = 1;
+/// cui_kv_editor(ui, "headers", headers, &n, 16);
+pub const KvPair = struct {
+    // `char key[64]` (arr): unsupported field type, reach it via zui.raw
+    // `char value[256]` (arr): unsupported field type, reach it via zui.raw
+    enabled: bool = false,  // the pair is in use; its checkbox toggles this
+    secret: bool = false,  // the value shows as dots, with an eye to reveal it; the lock button toggles this
+};
+
 /// C `cui_level_meter_opts` — Level meter: bars that jump up to each new peak and fall back at `decay`
 /// dB per second, with a peak mark that holds for `hold` seconds and a clip
 /// light that stays on until clicked. Levels are linear sample peaks (1.0 is
@@ -2189,6 +2250,26 @@ pub const LoaderOpts = struct {
     style: LoaderStyle = .dots,
     size: f32 = 0,
     color: ?Color = null,
+};
+
+pub const LogBuffer = struct {
+    now: f64 = 0,  // timestamp given to the next appended line (seconds)
+    lines: ?*c.cui_log_line = null,  // the line records given to `cui_log_init`
+    line_cap: i32 = 0,  // how many records `lines` has room for
+    // `text` (char *): pointer field, reach it via zui.raw
+    text_cap: u32 = 0,  // size of `text` in bytes
+    first: i32 = 0,  // ring of lines: oldest record and how many
+    count: i32 = 0,  // ring of lines: oldest record and how many
+    text_end: u32 = 0,  // where the next line's text goes
+    total: u64 = 0,  // lines ever appended; line i of the buffer is number total - count + i
+    // `int level_count[CUI_LOG_LEVEL_COUNT]` (arr): unsupported field type, reach it via zui.raw
+};
+
+pub const LogLine = struct {
+    offset: u32 = 0,  // where the line's text starts in the buffer's `text`
+    len: u32 = 0,  // bytes of text, not counting the terminator
+    time: f64 = 0,  // the timestamp it was appended with, in seconds
+    level: u8 = 0,  // a `cui_log_level`
 };
 
 pub const LogViewOpts = struct {
@@ -2405,7 +2486,7 @@ pub const NetRequest = struct {
     name: ?[]const u8 = null,  // path or URL; the last part is shown
     method: ?[]const u8 = null,  // "GET"
     status: i32 = 0,  // 0 while pending or when it failed
-    type: ?[]const u8 = null,  // "fetch", "script", "image"...
+    @"type": ?[]const u8 = null,  // "fetch", "script", "image"...
     size: f64 = 0,  // bytes transferred
     start: f64 = 0,  // seconds from the start of the page
     // `float timing[6]` (arr): unsupported field type, reach it via zui.raw
@@ -2527,7 +2608,7 @@ pub const PatternMeterOpts = struct {
 /// color from the series palette and limits links to pins of the same type
 /// (0 connects to anything). Returns true when the pin has a link.
 pub const PinOpts = struct {
-    type: i32 = 0,  // 0 links to any pin; another number links only to pins of that type and picks their color
+    @"type": i32 = 0,  // 0 links to any pin; another number links only to pins of that type and picks their color
 };
 
 pub const PipelineJob = struct {
@@ -2641,9 +2722,18 @@ pub const PropOpts = struct {
 
 pub const QueryField = struct {
     name: ?[]const u8 = null,  // shown in the field select and in the text `cui_query_text` writes
-    type: QueryType = .text,
+    @"type": QueryType = .text,
     // `choices` (const char *const *): pointer field, reach it via zui.raw
     choice_count: i32 = 0,  // number of `choices`
+};
+
+pub const QueryNode = struct {
+    depth: i32 = 0,  // 0 for the outer group
+    group: bool = false,  // a group of the nodes after it that are one level deeper; otherwise a rule
+    any: bool = false,  // group: any rule (or) instead of all (and)
+    field: i32 = 0,  // rule: index into the fields
+    op: i32 = 0,  // rule: see cui_query_op_name
+    // `char value[64]` (arr): unsupported field type, reach it via zui.raw
 };
 
 pub const QueryOpts = struct {
@@ -2718,6 +2808,14 @@ pub const ReasoningOpts = struct {
     thinking: bool = false,  // still thinking: the header shimmers and the body opens; it folds when this turns false
     seconds: f32 = 0,  // time spent, for the header: "Thinking for 12s", then "Thought for 12s"
     title: ?[]const u8 = null,  // header text to show instead of the "Thinking" and "Thought for" lines
+};
+
+pub const RegexMatch = struct {
+    start: i32 = 0,  // bytes
+    end: i32 = 0,  // bytes
+    groups: i32 = 0,  // capture groups in the pattern
+    // `int group_start[CUI_REGEX_GROUPS], group_end[CUI_REGEX_GROUPS]` (arr): unsupported field type, reach it via zui.raw
+    // `char group_name[CUI_REGEX_GROUPS][24]` (arr): unsupported field type, reach it via zui.raw
 };
 
 /// C `cui_regex_tester_opts` — A pattern field with flags over a test text: every match is highlighted in
@@ -2834,7 +2932,7 @@ pub const ScatterSeries = struct {
 /// and month names come from cui_set_strings.
 pub const ScheduleOpts = struct {
     width: Size = .fit,
-    // `now` (int64_t): unsupported field type, reach it via zui.raw
+    now: i64 = 0,  // the next runs are counted from here, Unix seconds; 0: the clock
     utc: bool = false,  // times in UTC instead of local time
     next_count: i32 = 0,  // runs listed, default 3, 0 hides them
 };
@@ -2842,7 +2940,7 @@ pub const ScheduleOpts = struct {
 pub const ScheduleResult = struct {
     changed: bool = false,  // `cron` was edited this frame
     valid: bool = false,  // `cron` is a valid expression
-    // `next` (int64_t): unsupported field type, reach it via zui.raw
+    next: i64 = 0,  // the next run, Unix seconds, 0 none
 };
 
 /// C `cui_scrub_opts` — Scrub field: drag sideways anywhere on it to change the value (Shift for
@@ -3189,6 +3287,46 @@ pub const TagOpts = struct {
     width: Size = .fit,
 };
 
+pub const TerminalBuffer = struct {
+    // `text` (char *): pointer field, reach it via zui.raw
+    text_cap: u32 = 0,  // size of `text` in bytes
+    lines: ?*c.cui_terminal_line = null,  // the line records given to `cui_terminal_init`
+    line_cap: i32 = 0,  // how many records `lines` has room for; 0 when the buffer cannot be used
+    first: i32 = 0,  // ring of lines; the last one is still being written
+    count: i32 = 0,  // ring of lines; the last one is still being written
+    end: u32 = 0,  // where the next byte goes
+    total: u64 = 0,  // lines ever started
+    mode: u8 = 0,  // parser: text, escape, CSI or OSC
+    seq_n: u8 = 0,  // bytes of `seq` read so far
+    // `char seq[30]` (arr): unsupported field type, reach it via zui.raw
+    cr: bool = false,  // a \r was seen: the next character starts the line over
+};
+
+/// C `cui_terminal_line` — ---- Terminal ----
+/// Terminal: program output with ANSI colors over an input line with a
+/// prompt and history, for consoles, REPLs and build tools. Output goes into
+/// a buffer you own (appending never allocates; the oldest lines go when it
+/// is full) and is parsed as it arrives: \n starts a line, \r returns to its
+/// start (progress bars redraw in place), \t, \b, and ESC [ ... m sets
+/// colors and styles (16 colors, 256 and 24-bit; bold, dim, italic,
+/// underline, inverse). Other escape sequences are skipped.
+/// static char text[512 * 1024]; static cui_terminal_line lines[8192];
+/// static cui_terminal_buffer term;
+/// cui_terminal_init(&term, text, sizeof text, lines, 8192);    // once
+/// cui_terminal_write(&term, output, n);                          // as output arrives
+/// cui_terminal_result r = cui_terminal(ui, "term", &term, .height = 360);
+/// if (r.command) run_command(r.command);                         // echoed for you
+/// Long lines wrap. The view follows the newest line until you scroll up.
+/// Drag to select, Ctrl+C copies the selection (or, with none, sets
+/// r.interrupt), Ctrl+L clears, Up and Down walk the history and clicking the
+/// output puts the keyboard in the input line. Only the rows in view are
+/// drawn. Text is left to right, one cell per character.
+pub const TerminalLine = struct {
+    offset: u32 = 0,  // where the line's bytes start in the buffer's `text`
+    len: u32 = 0,  // bytes of the line, with its color sequences
+    cols: u32 = 0,  // character cells the line takes, before wrapping
+};
+
 pub const TerminalOpts = struct {
     width: Size = .fit,  // default fill
     height: f32 = 0,  // default 320; negative fills the space
@@ -3515,6 +3653,13 @@ pub const TraceSpan = struct {
     color_key: u32 = 0,  // picks the color; 0: hashed from the name
 };
 
+pub const TreeNode = struct {
+    parent: i32 = 0,  // -1 for a top level node
+    first_child: i32 = 0,  // -1 when it has none, or none loaded yet
+    next_sibling: i32 = 0,  // -1 for the last one
+    flags: u32 = 0,  // CUI_TREE_*
+};
+
 /// C `cui_tree_opts` — Tree view node.
 pub const TreeOpts = struct {
     icon: ?[]const u8 = null,
@@ -3700,6 +3845,413 @@ pub const WheelOpts = struct {
     join_right: bool = false,  // squares off the right end of the selection band, to join a wheel on that side
 };
 // ==== END GEN:TYPES ====
+
+// ==== GEN:FREE ====
+
+fn zui_end_adapter_accordion_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_accordion_end(h);
+}
+
+
+fn zui_end_adapter_button_group_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_button_group_end(h);
+}
+
+
+fn zui_end_adapter_card_stack_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_card_stack_end(h);
+}
+
+
+fn zui_end_adapter_card_stack_item_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_card_stack_item_end(h);
+}
+
+
+fn zui_end_adapter_carousel_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_carousel_end(h);
+}
+
+
+fn zui_end_adapter_carousel_slide_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_carousel_slide_end(h);
+}
+
+
+fn zui_end_adapter_context_menu_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_context_menu_end(h);
+}
+
+
+fn zui_end_adapter_data_grid_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_data_grid_end(h);
+}
+
+
+fn zui_end_adapter_dialog_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_dialog_end(h);
+}
+
+
+fn zui_end_adapter_dialog_footer_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_dialog_footer_end(h);
+}
+
+
+fn zui_end_adapter_dock_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_dock_end(h);
+}
+
+
+fn zui_end_adapter_dock_panel_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_dock_panel_end(h);
+}
+
+
+fn zui_end_adapter_dockspace_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_dockspace_end(h);
+}
+
+
+fn zui_end_adapter_expandable_card_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_expandable_card_end(h);
+}
+
+
+fn zui_end_adapter_hover_card_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_hover_card_end(h);
+}
+
+
+fn zui_end_adapter_inspector_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_inspector_end(h);
+}
+
+
+fn zui_end_adapter_kanban_card_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_kanban_card_end(h);
+}
+
+
+fn zui_end_adapter_kanban_column_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_kanban_column_end(h);
+}
+
+
+fn zui_end_adapter_menu_bar_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_menu_bar_end(h);
+}
+
+
+fn zui_end_adapter_menu_bar_menu_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_menu_bar_menu_end(h);
+}
+
+
+fn zui_end_adapter_menu_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_menu_end(h);
+}
+
+
+fn zui_end_adapter_node_content_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_node_content_end(h);
+}
+
+
+fn zui_end_adapter_node_editor_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_node_editor_end(h);
+}
+
+
+fn zui_end_adapter_node_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_node_end(h);
+}
+
+
+fn zui_end_adapter_path_bar_menu_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_path_bar_menu_end(h);
+}
+
+
+fn zui_end_adapter_popover_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_popover_end(h);
+}
+
+
+fn zui_end_adapter_reasoning_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_reasoning_end(h);
+}
+
+
+fn zui_end_adapter_reorder_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_reorder_end(h);
+}
+
+
+fn zui_end_adapter_reorder_item_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_reorder_item_end(h);
+}
+
+
+fn zui_end_adapter_sheet_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_sheet_end(h);
+}
+
+
+fn zui_end_adapter_skeleton_group_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_skeleton_group_end(h);
+}
+
+
+fn zui_end_adapter_spotlight_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_spotlight_end(h);
+}
+
+
+fn zui_end_adapter_status_bar_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_status_bar_end(h);
+}
+
+
+fn zui_end_adapter_swipe_item_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_swipe_item_end(h);
+}
+
+
+fn zui_end_adapter_table_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_table_end(h);
+}
+
+
+fn zui_end_adapter_toolbar_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_toolbar_end(h);
+}
+
+
+fn zui_end_adapter_toolbar_group_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_toolbar_group_end(h);
+}
+
+
+fn zui_end_adapter_tree_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_tree_end(h);
+}
+
+
+fn zui_end_adapter_tree_table_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_tree_table_end(h);
+}
+
+
+fn zui_end_adapter_user_menu_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_user_menu_end(h);
+}
+
+
+fn zui_end_adapter_veil_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_veil_end(h);
+}
+
+
+fn zui_end_adapter_virtual_list_end(h: ?*c.cui_ctx) callconv(.c) void {
+    _ = c.cui_virtual_list_end(h);
+}
+
+
+pub fn accent_name(accent: Accent) []const u8 {
+    return spanOrEmpty(c.cui_accent_name(enumOrInt(c.cui_accent, accent)));
+}
+
+
+/// Color helpers. Mixing is done in OKLab, like CSS color-mix(in oklab).
+pub fn oklch(l: f32, color: f32, h_degrees: f32, alpha_mult: f32) Color {
+    return colorFromC(c.cui_oklch(l, color, h_degrees, alpha_mult));
+}
+
+
+pub fn mix(a: Color, b: Color, t: f32) Color {
+    return colorFromC(c.cui_mix(colorToC(a), colorToC(b), t));
+}
+
+
+pub fn alpha(color: Color, alpha_multiplier: f32) Color {
+    return colorFromC(c.cui_alpha(colorToC(color), alpha_multiplier));
+}
+
+
+pub fn date_today() Date {
+    return cvtBackStruct(Date, c.cui_date_today());
+}
+
+
+pub fn fs_list(user: ?*anyopaque, path: [:0]const u8, out: *c.cui_file_entry, cap: i32, names: [:0]u8, names_cap: usize, hidden: bool) i32 {
+    return c.cui_fs_list(user, path.ptr, @ptrCast(out), cap, names.ptr, names_cap, hidden);
+}
+
+
+pub fn diff_compute(old_text: [:0]const u8, old_len: usize, new_text: [:0]const u8, new_len: usize, flags: u32, hunks: *c.cui_diff_hunk, cap: i32, stats: *c.cui_diff_stats) i32 {
+    return c.cui_diff_compute(old_text.ptr, old_len, new_text.ptr, new_len, flags, @ptrCast(hunks), cap, @ptrCast(stats));
+}
+
+
+pub fn diff_words(old_line: [:0]const u8, old_len: i32, new_line: [:0]const u8, new_len: i32, old_ranges: *c.cui_diff_range, old_count: *i32, new_ranges: *c.cui_diff_range, new_count: *i32, cap: i32) bool {
+    return c.cui_diff_words(old_line.ptr, old_len, new_line.ptr, new_len, @ptrCast(old_ranges), @ptrCast(old_count), @ptrCast(new_ranges), @ptrCast(new_count), cap);
+}
+
+
+/// Resamples a clip to `columns` levels the way the clip strip does (the loudest
+/// level of each stretch; a stretch with no audio stays CUI_VOICE_SILENT), for
+/// keeping a short waveform with a message. Returns the number written.
+pub fn voice_resample(levels: []const f32, out: *f32, columns: i32) i32 {
+    return c.cui_voice_resample(levels.ptr, @intCast(levels.len), @ptrCast(out), columns);
+}
+
+
+pub fn date_to_days(d: Date) i32 {
+    const zp0_c = cvtFree(c.cui_date, d);
+    return c.cui_date_to_days(zp0_c);
+}
+
+
+pub fn date_from_days(days: i32) Date {
+    return cvtBackStruct(Date, c.cui_date_from_days(days));
+}
+
+
+pub fn path_has_extension(path: [:0]const u8, accept: [:0]const u8) bool {
+    return c.cui_path_has_extension(path.ptr, accept.ptr);
+}
+
+
+pub fn key_name(key: Key) []const u8 {
+    return spanOrEmpty(c.cui_key_name(enumOrInt(c.cui_key, key)));
+}
+
+
+pub fn log_init(buf: *c.cui_log_buffer, lines: *c.cui_log_line, line_cap: i32, text: [:0]u8, text_cap: usize) void {
+    c.cui_log_init(@ptrCast(buf), @ptrCast(lines), line_cap, text.ptr, text_cap);
+}
+
+
+/// Appends len bytes (-1: up to the terminator) stamped with time.
+pub fn log_append_text(buf: *c.cui_log_buffer, level: LogLevel, time: f64, text: []const u8) void {
+    c.cui_log_append_text(@ptrCast(buf), enumOrInt(c.cui_log_level, level), time, text.ptr, @intCast(text.len));
+}
+
+
+pub fn log_clear(buf: *c.cui_log_buffer) void {
+    c.cui_log_clear(@ptrCast(buf));
+}
+
+
+pub fn terminal_init(t: *c.cui_terminal_buffer, text: [:0]u8, text_cap: usize, lines: *c.cui_terminal_line, line_cap: i32) void {
+    c.cui_terminal_init(@ptrCast(t), text.ptr, text_cap, @ptrCast(lines), line_cap);
+}
+
+
+pub fn terminal_write(t: *c.cui_terminal_buffer, data: []const u8) void {
+    c.cui_terminal_write(@ptrCast(t), data.ptr, @intCast(data.len));
+}
+
+
+pub fn terminal_clear(t: *c.cui_terminal_buffer) void {
+    c.cui_terminal_clear(@ptrCast(t));
+}
+
+
+/// Sorts spans into the order the graph needs: by depth, then start (longer
+/// first on ties).
+pub fn flame_sort(spans: []c.cui_flame_span) void {
+    c.cui_flame_sort(@ptrCast(spans.ptr), @intCast(spans.len));
+}
+
+
+/// The curve's value at x: exactly what the editor draws. keys sorted by x.
+pub fn curve_eval(keys: []const CurveKey, x: f32) f32 {
+    const zp0_c = std.heap.page_allocator.alloc(c.cui_curve_key, keys.len) catch @panic("zui: oom");
+    defer std.heap.page_allocator.free(zp0_c);
+    for (keys, 0..) |*it, ii| zp0_c[ii] = cvtFree(c.cui_curve_key, it.*);
+    return c.cui_curve_eval(zp0_c.ptr, @intCast(keys.len), x);
+}
+
+
+/// The color at t: exactly what the ramp shows (each channel, alpha too,
+/// interpolated in sRGB between the stops on either side; the end colors
+/// continue past the first and last stop).
+pub fn gradient_eval(stops: []const GradientStop, t: f32) Color {
+    const zp0_c = std.heap.page_allocator.alloc(c.cui_gradient_stop, stops.len) catch @panic("zui: oom");
+    defer std.heap.page_allocator.free(zp0_c);
+    for (stops, 0..) |*it, ii| zp0_c[ii] = cvtFree(c.cui_gradient_stop, it.*);
+    return colorFromC(c.cui_gradient_eval(zp0_c.ptr, @intCast(stops.len), t));
+}
+
+
+/// the operators of a type: text "is", "is not", "contains", "does not contain",
+/// "starts with", "ends with"; number "=", "!=", ">", ">=", "<", "<="; choice
+/// "is", "is not"; bool "is true", "is false". NULL past the last.
+pub fn query_op_name(@"type": QueryType, op: i32) []const u8 {
+    return spanOrEmpty(c.cui_query_op_name(enumOrInt(c.cui_query_type, @"type"), op));
+}
+
+
+pub fn query_text(fields: []const c.cui_query_field, nodes: []const c.cui_query_node, out: [:0]u8, cap: usize) usize {
+    return c.cui_query_text(@ptrCast(fields.ptr), @intCast(fields.len), @ptrCast(nodes.ptr), @intCast(nodes.len), out.ptr, cap);
+}
+
+
+/// values[i] is the record's value for field i, as text ("1", "true", "open").
+pub fn query_match(fields: []const c.cui_query_field, nodes: []const c.cui_query_node, values: []const []const u8) bool {
+    var zp4_total: usize = 0;
+    for (values) |v| zp4_total += v.len + 1;
+    const zp4_blob = std.heap.page_allocator.alloc(u8, zp4_total + 1) catch @panic("zui: oom");
+    defer std.heap.page_allocator.free(zp4_blob);
+    const zp4_c = std.heap.page_allocator.alloc([*c]const u8, values.len + 1) catch @panic("zui: oom");
+    defer std.heap.page_allocator.free(zp4_c);
+    var zp4_off: usize = 0;
+    for (values, 0..) |v, ii| {
+        @memcpy(zp4_blob[zp4_off..zp4_off + v.len], v);
+        zp4_blob[zp4_off + v.len] = 0;
+        zp4_c[ii] = @ptrCast(zp4_blob[zp4_off..zp4_off + v.len :0].ptr);
+        zp4_off += v.len + 1;
+    }
+    zp4_c[values.len] = null;
+    return c.cui_query_match(@ptrCast(fields.ptr), @intCast(fields.len), @ptrCast(nodes.ptr), @intCast(nodes.len), zp4_c.ptr);
+}
+
+
+/// The first time after `after` (Unix seconds) the expression matches, in the
+/// time zone that is utc_offset minutes east of UTC. Supports *, lists,
+/// ranges, steps and the names JAN-DEC and SUN-SAT. False when it is invalid
+/// or never runs in the next five years.
+pub fn cron_next(cron: [:0]const u8, after: i64, utc_offset: i32, next: *i64) bool {
+    return c.cui_cron_next(cron.ptr, after, utc_offset, @ptrCast(next));
+}
+
+
+pub fn trace_sort(spans: []c.cui_trace_span) void {
+    c.cui_trace_sort(@ptrCast(spans.ptr), @intCast(spans.len));
+}
+
+
+pub fn http_reason(status: i32) []const u8 {
+    return spanOrEmpty(c.cui_http_reason(status));
+}
+
+
+pub fn http_method_name(method: i32) []const u8 {
+    return spanOrEmpty(c.cui_http_method_name(method));
+}
+
+
+pub fn url_params(url: [:0]const u8, pairs: *c.cui_kv_pair, cap: i32) i32 {
+    return c.cui_url_params(url.ptr, @ptrCast(pairs), cap);
+}
+
+
+pub fn url_set_params(url: [:0]u8, cap: usize, pairs: []const c.cui_kv_pair) bool {
+    return c.cui_url_set_params(url.ptr, cap, @ptrCast(pairs.ptr), @intCast(pairs.len));
+}
+// ==== END GEN:FREE ====
 
 /// C `cui_box` — options for every container.
 pub const BoxOpts = struct {
@@ -4287,6 +4839,52 @@ pub const Ui = struct {
         return .{ .raw_value = r };
     }
 
+    // ---- custom drawing (callback APIs, hand-wrapped) -----------------------
+
+    /// A box you paint yourself. `paint` runs after layout with the final
+    /// rectangle; it may call the `ui.draw_*` helpers and text. Returns
+    /// interaction info (hover/press/click and the pointer position).
+    pub fn canvas(
+        self: *Ui,
+        id: []const u8,
+        width: Size,
+        height: Size,
+        ctx: anytype,
+        comptime paint_fn: anytype,
+    ) CanvasResult {
+        const Ctx = @TypeOf(ctx);
+        const Blob = struct { ui: *Ui, ctx: Ctx };
+        const T = struct {
+            fn call(hc: ?*c.cui_ctx, r: c.cui_rect, u: ?*anyopaque) callconv(.c) void {
+                _ = hc;
+                const b: *Blob = @ptrCast(@alignCast(u.?));
+                @call(.auto, paint_fn, .{ b.ui, rectFromC(r), b.ctx });
+            }
+        };
+        var blob = Blob{ .ui = self, .ctx = ctx };
+        const w_c = width.toC();
+        const h_c = height.toC();
+        const r = c.cui_canvas(self.h, self.tmpStr(id).ptr, w_c, h_c, T.call, &blob, @sizeOf(Blob));
+        return cvtBackStruct(CanvasResult, r);
+    }
+
+    /// The signature pad's strokes so far: point array and the index where
+    /// each new stroke starts, valid for the frame. Returns the point count.
+    pub fn signaturePoints(self: *Ui, id: []const u8, points_out: *[]const Vec2, stroke_ends_out: *[]const i32) i32 {
+        var pts: [*c]const c.cui_vec2 = null;
+        var ends: [*c]const c_int = null;
+        var n: c_int = 0;
+        const r = c.cui_signature_points(self.h, self.tmpStr(id).ptr, &pts, &ends, &n);
+        const count: usize = @intCast(n);
+        const pv = self.arena.allocator().alloc(Vec2, count) catch @panic("zui: oom");
+        for (0..count) |i| pv[i] = .{ .x = pts[i].x, .y = pts[i].y };
+        const ev = self.arena.allocator().alloc(i32, count) catch @panic("zui: oom");
+        for (0..count) |i| ev[i] = @intCast(ends[i]);
+        points_out.* = pv;
+        stroke_ends_out.* = ev;
+        return r;
+    }
+
     // ==== GEN:METHODS ====
 
 // Generated component methods. C cui_foo_ex -> foo; begin/end pairs
@@ -4307,11 +4905,6 @@ pub fn dropped_file(self: *Ui, index: i32) []const u8 {
 
 pub fn file_drag_active(self: *Ui) bool {
     return c.cui_file_drag_active(self.h);
-}
-
-pub fn set_platform(self: *Ui, platform: PlatformIface) void {
-    const platform_c = self.cvtOpts(c.cui_platform_iface, platform);
-    c.cui_set_platform(self.h, &platform_c);
 }
 
 pub fn get_cursor(self: *Ui) Cursor {
@@ -4385,6 +4978,12 @@ pub fn get_accent(self: *Ui) Accent {
     return @enumFromInt(enumToInt(c.cui_get_accent(self.h)));
 }
 
+/// The active theme. Edit it to customize; changes apply next frame. Theme
+/// changes through cui_set_theme/cui_set_accent animate smoothly.
+pub fn theme_get(self: *Ui) ?*c.cui_theme {
+    return c.cui_theme_get(self.h);
+}
+
 pub fn set_reduced_motion(self: *Ui, reduced: bool) void {
     c.cui_set_reduced_motion(self.h, reduced);
 }
@@ -4393,9 +4992,8 @@ pub fn color_of(self: *Ui, color: Color) Color {
     return colorFromC(c.cui_color_of(self.h, colorToC(color)));
 }
 
-pub fn set_strings(self: *Ui, strings: Strings) void {
-    const strings_c = self.cvtOpts(c.cui_strings, strings);
-    c.cui_set_strings(self.h, &strings_c);
+pub fn get_strings(self: *Ui) ?*const c.cui_strings {
+    return c.cui_get_strings(self.h);
 }
 
 pub fn token_color(self: *Ui, token: Token) Color {
@@ -4405,7 +5003,7 @@ pub fn token_color(self: *Ui, token: Token) Color {
 /// Load a TrueType/OpenType font. The data must stay alive if copy is false.
 /// Returns a font id, or -1 on failure.
 pub fn font_load_memory(self: *Ui, data: []const u8, copy: bool) i32 {
-    return c.cui_font_load_memory(self.h, data.ptr, data.len, copy);
+    return c.cui_font_load_memory(self.h, data.ptr, @intCast(data.len), copy);
 }
 
 pub fn font_load_file(self: *Ui, path: []const u8) i32 {
@@ -4425,8 +5023,8 @@ pub fn font_add_fallback(self: *Ui, font: i32, fallback: i32) void {
 /// CUI_TEXT_SHAPING optionally shapes static RTL lines; see docs/integration.md.
 /// Container direction sets the paragraph base. Editing and explicit bidi formatting
 /// are unsupported; the shaper implements an experimental OpenType subset.
-pub fn measure_text(self: *Ui, font: i32, size_arg: f32, s: []const u8, len: i32) TextMetrics {
-    return cvtBackStruct(TextMetrics, c.cui_measure_text(self.h, font, size_arg, self.tmpStr(s).ptr, len));
+pub fn measure_text(self: *Ui, font: i32, size_arg: f32, s: []const u8) TextMetrics {
+    return cvtBackStruct(TextMetrics, c.cui_measure_text(self.h, font, size_arg, s.ptr, @intCast(s.len)));
 }
 
 pub fn label_text(self: *Ui, s: []const u8) void {
@@ -4434,14 +5032,14 @@ pub fn label_text(self: *Ui, s: []const u8) void {
 }
 
 pub fn segmented(self: *Ui, id: []const u8, items: []const []const u8, index: *i32, opts: SegmentedOpts) bool {
-    const items_c = self.strArr(items);
+    const zp2_c = self.strArr(items);
     const opts_c = self.cvtOpts(c.cui_segmented_opts, opts);
-    return c.cui_segmented_ex(self.h, self.tmpStr(id).ptr, items_c, @intCast(items.len), @ptrCast(index), &opts_c);
+    return c.cui_segmented_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(items.len), @ptrCast(index), &opts_c);
 }
 
 pub fn radio_group(self: *Ui, id: []const u8, items: []const []const u8, index: *i32) bool {
-    const items_c = self.strArr(items);
-    return c.cui_radio_group(self.h, self.tmpStr(id).ptr, items_c, @intCast(items.len), @ptrCast(index));
+    const zp2_c = self.strArr(items);
+    return c.cui_radio_group(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(items.len), @ptrCast(index));
 }
 
 /// Range slider with two non-crossing thumbs. Tab focuses the range, Space
@@ -4462,9 +5060,9 @@ pub fn chip(self: *Ui, label: []const u8, selected: *bool, opts: ChipOpts) bool 
 /// Enter opens the list or picks the highlighted item. A searchable select
 /// returns focus to its trigger when its list closes.
 pub fn select(self: *Ui, id: []const u8, items: []const []const u8, index: *i32, opts: SelectOpts) bool {
-    const items_c = self.strArr(items);
+    const zp2_c = self.strArr(items);
     const opts_c = self.cvtOpts(c.cui_select_opts, opts);
-    return c.cui_select_ex(self.h, self.tmpStr(id).ptr, items_c, @intCast(items.len), @ptrCast(index), &opts_c);
+    return c.cui_select_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(items.len), @ptrCast(index), &opts_c);
 }
 
 pub fn calendar(self: *Ui, id: []const u8, value: *c.cui_date) bool {
@@ -4476,10 +5074,17 @@ pub fn date_picker(self: *Ui, id: []const u8, value: *c.cui_date, opts: DateOpts
     return c.cui_date_picker_ex(self.h, self.tmpStr(id).ptr, @ptrCast(value), &opts_c);
 }
 
+pub fn color_picker(self: *Ui, id: []const u8, value: *Color) bool {
+    var zp2_c: c.cui_color = colorToC(value.*);
+    const result = c.cui_color_picker(self.h, self.tmpStr(id).ptr, &zp2_c);
+    value.* = colorFromC(zp2_c);
+    return result;
+}
+
 pub fn tabs(self: *Ui, id: []const u8, items: []const []const u8, index: *i32, opts: TabsOpts) bool {
-    const items_c = self.strArr(items);
+    const zp2_c = self.strArr(items);
     const opts_c = self.cvtOpts(c.cui_tabs_opts, opts);
-    return c.cui_tabs_ex(self.h, self.tmpStr(id).ptr, items_c, @intCast(items.len), @ptrCast(index), &opts_c);
+    return c.cui_tabs_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(items.len), @ptrCast(index), &opts_c);
 }
 
 pub fn nav_item(self: *Ui, label: []const u8, opts: NavOpts) bool {
@@ -4493,8 +5098,8 @@ pub fn nav_section(self: *Ui, title: []const u8) void {
 
 /// Ancestor links, which show keyboard focus. Returns the clicked index or -1.
 pub fn breadcrumb(self: *Ui, items: []const []const u8) i32 {
-    const items_c = self.strArr(items);
-    return c.cui_breadcrumb(self.h, items_c, @intCast(items.len));
+    const zp1_c = self.strArr(items);
+    return c.cui_breadcrumb(self.h, zp1_c, @intCast(items.len));
 }
 
 /// Page buttons, which show keyboard focus; page is 0 based. The compact layout is
@@ -4505,22 +5110,22 @@ pub fn pagination(self: *Ui, id: []const u8, page: *i32, page_count: i32) bool {
 
 /// Process steps; labels collapse to fit the width of their own row.
 pub fn stepper(self: *Ui, steps: []const []const u8, current: i32) void {
-    const steps_c = self.strArr(steps);
-    c.cui_stepper(self.h, steps_c, @intCast(steps.len), current);
+    const zp1_c = self.strArr(steps);
+    c.cui_stepper(self.h, zp1_c, @intCast(steps.len), current);
 }
 
 pub fn popover(self: *Ui, id: []const u8, opts: PopoverOpts) bool {
     const opts_c = self.cvtOpts(c.cui_popover_opts, opts);
     if (!(c.cui_popover_begin(self.h, self.tmpStr(id).ptr, &opts_c))) return false;
-    self.pushEnd(c.cui_popover_end);
+    self.pushEnd(zui_end_adapter_popover_end);
     return true;
 }
 
 /// What happened this frame: one of CUI_TOUR_*.
 pub fn tour(self: *Ui, id: []const u8, steps: []const TourStep, step: *i32, opts: TourOpts) i32 {
-    const steps_c = self.structArr(c.cui_tour_step, steps);
+    const zp2_c = self.structArr(c.cui_tour_step, steps);
     const opts_c = self.cvtOpts(c.cui_tour_opts, opts);
-    return c.cui_tour_ex(self.h, self.tmpStr(id).ptr, steps_c, @intCast(steps.len), @ptrCast(step), &opts_c);
+    return c.cui_tour_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(steps.len), @ptrCast(step), &opts_c);
 }
 
 pub fn popover_open(self: *Ui, id: []const u8) void {
@@ -4542,14 +5147,14 @@ pub fn popover_is_open(self: *Ui, id: []const u8) bool {
 pub fn menu(self: *Ui, label: []const u8, opts: MenuOpts) bool {
     const opts_c = self.cvtOpts(c.cui_menu_opts, opts);
     if (!(c.cui_menu_begin(self.h, self.tmpStr(label).ptr, &opts_c))) return false;
-    self.pushEnd(c.cui_menu_end);
+    self.pushEnd(zui_end_adapter_menu_end);
     return true;
 }
 
 /// Context menu: opens on right click over the previous component.
 pub fn context_menu(self: *Ui, id: []const u8) bool {
     if (!(c.cui_context_menu_begin(self.h, self.tmpStr(id).ptr))) return false;
-    self.pushEnd(c.cui_context_menu_end);
+    self.pushEnd(zui_end_adapter_context_menu_end);
     return true;
 }
 
@@ -4577,20 +5182,20 @@ pub fn tooltip(self: *Ui, s: []const u8) void {
 pub fn dialog(self: *Ui, title: []const u8, open: *bool, opts: DialogOpts) bool {
     const opts_c = self.cvtOpts(c.cui_dialog_opts, opts);
     if (!(c.cui_dialog_begin(self.h, self.tmpStr(title).ptr, open, &opts_c))) return false;
-    self.pushEnd(c.cui_dialog_end);
+    self.pushEnd(zui_end_adapter_dialog_end);
     return true;
 }
 
 /// A right-aligned row for dialog actions.
 pub fn dialog_footer(self: *Ui) void {
-    self.pushEnd(c.cui_dialog_footer_end);
+    self.pushEnd(zui_end_adapter_dialog_footer_end);
 c.cui_dialog_footer_begin(self.h);
 }
 
 pub fn sheet(self: *Ui, title: []const u8, open: *bool, opts: SheetOpts) bool {
     const opts_c = self.cvtOpts(c.cui_sheet_opts, opts);
     if (!(c.cui_sheet_begin(self.h, self.tmpStr(title).ptr, open, &opts_c))) return false;
-    self.pushEnd(c.cui_sheet_end);
+    self.pushEnd(zui_end_adapter_sheet_end);
     return true;
 }
 
@@ -4627,13 +5232,13 @@ pub fn spinner(self: *Ui, size_arg: f32, opts: SpinnerOpts) void {
 }
 
 pub fn skeleton(self: *Ui, width: Size, height: f32) void {
-    const width_c = width.toC();
-    c.cui_skeleton(self.h, &width_c, height);
+    const zp1_c = width.toC();
+    c.cui_skeleton(self.h, zp1_c, height);
 }
 
 pub fn skeleton_group(self: *Ui, opts: SkeletonGroupOpts) void {
     const opts_c = self.cvtOpts(c.cui_skeleton_group_opts, opts);
-    self.pushEnd(c.cui_skeleton_group_end);
+    self.pushEnd(zui_end_adapter_skeleton_group_end);
 c.cui_skeleton_group_begin_ex(self.h, &opts_c);
 }
 
@@ -4648,8 +5253,8 @@ pub fn avatar(self: *Ui, name: []const u8, opts: AvatarOpts) void {
 }
 
 pub fn avatar_group(self: *Ui, names: []const []const u8, max_visible: i32, size_arg: f32) void {
-    const names_c = self.strArr(names);
-    c.cui_avatar_group(self.h, names_c, @intCast(names.len), max_visible, size_arg);
+    const zp1_c = self.strArr(names);
+    c.cui_avatar_group(self.h, zp1_c, @intCast(names.len), max_visible, size_arg);
 }
 
 /// Empty state. Returns true when its action button is clicked.
@@ -4673,14 +5278,14 @@ pub fn meter(self: *Ui, label: []const u8, used: f32, total: f32, unit: []const 
 /// Accordion / disclosure. Content animates its height.
 pub fn accordion(self: *Ui, title: []const u8, open: *bool) bool {
     if (!(c.cui_accordion_begin(self.h, self.tmpStr(title).ptr, open))) return false;
-    self.pushEnd(c.cui_accordion_end);
+    self.pushEnd(zui_end_adapter_accordion_end);
     return true;
 }
 
 pub fn tree(self: *Ui, label: []const u8, open: *bool, opts: TreeOpts) bool {
     const opts_c = self.cvtOpts(c.cui_tree_opts, opts);
     if (!(c.cui_tree_begin(self.h, self.tmpStr(label).ptr, open, &opts_c))) return false;
-    self.pushEnd(c.cui_tree_end);
+    self.pushEnd(zui_end_adapter_tree_end);
     return true;
 }
 
@@ -4696,16 +5301,16 @@ pub fn list_item(self: *Ui, title: []const u8, opts: ListItemOpts) bool {
 /// Virtual list: only the visible rows are built, so lists with a million
 /// rows stay fast. Fills first/last with the visible range for this row count.
 pub fn virtual_list(self: *Ui, id: []const u8, count: i32, row_height: f32, height: Size, first: *i32, last: *i32) void {
-    const height_c = height.toC();
-    self.pushEnd(c.cui_virtual_list_end);
-c.cui_virtual_list_begin(self.h, self.tmpStr(id).ptr, count, row_height, &height_c, @ptrCast(first), @ptrCast(last));
+    const zp4_c = height.toC();
+    self.pushEnd(zui_end_adapter_virtual_list_end);
+c.cui_virtual_list_begin(self.h, self.tmpStr(id).ptr, count, row_height, zp4_c, @ptrCast(first), @ptrCast(last));
 }
 
 pub fn table(self: *Ui, id: []const u8, columns: []const TableColumn, opts: TableOpts) bool {
-    const columns_c = self.structArr(c.cui_table_column, columns);
+    const zp2_c = self.structArr(c.cui_table_column, columns);
     const opts_c = self.cvtOpts(c.cui_table_opts, opts);
-    if (!(c.cui_table_begin_ex(self.h, self.tmpStr(id).ptr, columns_c, @intCast(columns.len), &opts_c))) return false;
-    self.pushEnd(c.cui_table_end);
+    if (!(c.cui_table_begin_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(columns.len), &opts_c))) return false;
+    self.pushEnd(zui_end_adapter_table_end);
     return true;
 }
 
@@ -4724,26 +5329,26 @@ pub fn table_cell_text(self: *Ui, s: []const u8) void {
 }
 
 pub fn line_chart(self: *Ui, id: []const u8, series: []const Series, opts: ChartOpts) void {
-    const series_c = self.structArr(c.cui_series, series);
+    const zp2_c = self.structArr(c.cui_series, series);
     const opts_c = self.cvtOpts(c.cui_chart_opts, opts);
-    c.cui_line_chart_ex(self.h, self.tmpStr(id).ptr, series_c, @intCast(series.len), &opts_c);
+    c.cui_line_chart_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(series.len), &opts_c);
 }
 
 pub fn bar_chart(self: *Ui, id: []const u8, series: []const Series, opts: ChartOpts) void {
-    const series_c = self.structArr(c.cui_series, series);
+    const zp2_c = self.structArr(c.cui_series, series);
     const opts_c = self.cvtOpts(c.cui_chart_opts, opts);
-    c.cui_bar_chart_ex(self.h, self.tmpStr(id).ptr, series_c, @intCast(series.len), &opts_c);
+    c.cui_bar_chart_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(series.len), &opts_c);
 }
 
 pub fn donut_chart(self: *Ui, id: []const u8, values: []const f32, labels: []const []const u8, opts: ChartOpts) void {
-    const labels_c = self.strArr(labels);
+    const zp3_c = self.strArr(labels);
     const opts_c = self.cvtOpts(c.cui_chart_opts, opts);
-    c.cui_donut_chart_ex(self.h, self.tmpStr(id).ptr, values.ptr, @intCast(values.len), labels_c, @intCast(labels.len), &opts_c);
+    c.cui_donut_chart_ex(self.h, self.tmpStr(id).ptr, values.ptr, zp3_c, @intCast(labels.len), &opts_c);
 }
 
 pub fn sparkline(self: *Ui, values: []const f32, width: Size, height: f32, color: Color) void {
-    const width_c = width.toC();
-    c.cui_sparkline(self.h, values.ptr, @intCast(values.len), &width_c, height, colorToC(color));
+    const zp3_c = width.toC();
+    c.cui_sparkline(self.h, values.ptr, @intCast(values.len), zp3_c, height, colorToC(color));
 }
 
 pub fn gauge(self: *Ui, label: []const u8, value: f32, size_arg: f32) void {
@@ -4751,14 +5356,14 @@ pub fn gauge(self: *Ui, label: []const u8, value: f32, size_arg: f32) void {
 }
 
 pub fn pattern_meter(self: *Ui, id: []const u8, parts: []const MeterPart, opts: PatternMeterOpts) i32 {
-    const parts_c = self.structArr(c.cui_meter_part, parts);
+    const zp2_c = self.structArr(c.cui_meter_part, parts);
     const opts_c = self.cvtOpts(c.cui_pattern_meter_opts, opts);
-    return c.cui_pattern_meter_ex(self.h, self.tmpStr(id).ptr, parts_c, @intCast(parts.len), &opts_c);
+    return c.cui_pattern_meter_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(parts.len), &opts_c);
 }
 
 /// Images
 pub fn image_create(self: *Ui, w: i32, h: i32, rgba_arg: []const u8) usize {
-    return c.cui_image_create(self.h, w, h, rgba_arg.ptr, rgba_arg.len);
+    return c.cui_image_create(self.h, w, h, rgba_arg.ptr);
 }
 
 pub fn image_load(self: *Ui, path: []const u8, w: *i32, h: *i32) usize {
@@ -4780,35 +5385,41 @@ pub fn image_viewer(self: *Ui, id: []const u8, tex: usize, image_w: i32, image_h
     return c.cui_image_viewer_ex(self.h, self.tmpStr(id).ptr, tex, image_w, image_h, @ptrCast(view), &opts_c);
 }
 
+/// Returns true when the crop changed.
+pub fn cropper(self: *Ui, id: []const u8, tex: usize, image_w: i32, image_h: i32, crop: *i32, opts: CropperOpts) bool {
+    const opts_c = self.cvtOpts(c.cui_cropper_opts, opts);
+    return c.cui_cropper_ex(self.h, self.tmpStr(id).ptr, tex, image_w, image_h, @ptrCast(crop), &opts_c);
+}
+
 /// Spotlight style command palette. Returns the index of the chosen command,
 /// or -1. Open it with a shortcut: if (cui_shortcut(ui, CUI_MOD_PRIMARY, CUI_KEY_K)) open = true;
 pub fn command_palette(self: *Ui, open: *bool, commands: []const Command) i32 {
-    const commands_c = self.structArr(c.cui_command, commands);
-    return c.cui_command_palette(self.h, open, commands_c, @intCast(commands.len));
+    const zp2_c = self.structArr(c.cui_command, commands);
+    return c.cui_command_palette(self.h, open, zp2_c, @intCast(commands.len));
 }
 
 pub fn radio_cards(self: *Ui, id: []const u8, choices: []const Choice, index: *i32, opts: RadioCardsOpts) bool {
-    const choices_c = self.structArr(c.cui_choice, choices);
+    const zp2_c = self.structArr(c.cui_choice, choices);
     const opts_c = self.cvtOpts(c.cui_radio_cards_opts, opts);
-    return c.cui_radio_cards_ex(self.h, self.tmpStr(id).ptr, choices_c, @intCast(choices.len), @ptrCast(index), &opts_c);
+    return c.cui_radio_cards_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(choices.len), @ptrCast(index), &opts_c);
 }
 
 /// max_tags applies to every tag, including a batch separated by commas.
 pub fn tag_input(self: *Ui, id: []const u8, buf: []u8, cap: usize, opts: TagOpts) bool {
     const opts_c = self.cvtOpts(c.cui_tag_opts, opts);
-    return c.cui_tag_input_ex(self.h, self.tmpStr(id).ptr, buf.ptr, buf.len, cap, &opts_c);
+    return c.cui_tag_input_ex(self.h, self.tmpStr(id).ptr, buf.ptr, cap, &opts_c);
 }
 
 /// One time code input: `length` boxes; code must hold length + 1 bytes.
 /// Returns true when all boxes are filled, including when a paste replaces
 /// one complete code with a different complete code.
 pub fn otp_input(self: *Ui, id: []const u8, code_arg: []u8, length: i32) bool {
-    return c.cui_otp_input(self.h, self.tmpStr(id).ptr, code_arg.ptr, code_arg.len, length);
+    return c.cui_otp_input(self.h, self.tmpStr(id).ptr, code_arg.ptr, length);
 }
 
 /// Connected buttons. Put buttons between begin and end.
 pub fn button_group(self: *Ui) void {
-    self.pushEnd(c.cui_button_group_end);
+    self.pushEnd(zui_end_adapter_button_group_end);
 c.cui_button_group_begin(self.h);
 }
 
@@ -4838,16 +5449,12 @@ pub fn timeline_item(self: *Ui, title: []const u8, opts: TimelineOpts) void {
 /// display order: for (i...) cui_reorder_item(ui, i) { draw item order[i] }.
 /// Returns true on the frame the order changes.
 pub fn reorder(self: *Ui, id: []const u8, order: *i32, count: i32) void {
-    self.pushEnd(c.cui_cui_reorder_end);
+    self.pushEnd(zui_end_adapter_reorder_end);
 c.cui_reorder_begin(self.h, self.tmpStr(id).ptr, @ptrCast(order), count);
 }
 
-pub fn reorder_end(self: *Ui) bool {
-    return c.cui_reorder_end(self.h);
-}
-
 pub fn reorder_item(self: *Ui, position: i32) void {
-    self.pushEnd(c.cui_reorder_item_end);
+    self.pushEnd(zui_end_adapter_reorder_item_end);
 c.cui_reorder_item_begin(self.h, position);
 }
 
@@ -4857,15 +5464,15 @@ pub fn progress_ring(self: *Ui, label: []const u8, value: f32, size_arg: f32) vo
 }
 
 pub fn split_button(self: *Ui, label: []const u8, items: []const []const u8, opts: SplitButtonOpts) i32 {
-    const items_c = self.strArr(items);
+    const zp2_c = self.strArr(items);
     const opts_c = self.cvtOpts(c.cui_split_button_opts, opts);
-    return c.cui_split_button_ex(self.h, self.tmpStr(label).ptr, items_c, @intCast(items.len), &opts_c);
+    return c.cui_split_button_ex(self.h, self.tmpStr(label).ptr, zp2_c, @intCast(items.len), &opts_c);
 }
 
 pub fn toggle_group(self: *Ui, id: []const u8, labels: []const []const u8, values: *bool, opts: ToggleGroupOpts) bool {
-    const labels_c = self.strArr(labels);
+    const zp2_c = self.strArr(labels);
     const opts_c = self.cvtOpts(c.cui_toggle_group_opts, opts);
-    return c.cui_toggle_group_ex(self.h, self.tmpStr(id).ptr, labels_c, @intCast(labels.len), values, &opts_c);
+    return c.cui_toggle_group_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(labels.len), values, &opts_c);
 }
 
 pub fn confirm_button(self: *Ui, label: []const u8, opts: ConfirmOpts) bool {
@@ -4883,14 +5490,14 @@ pub fn status_spinner(self: *Ui, id: []const u8, status: Status, opts: StatusSpi
     return c.cui_status_spinner_ex(self.h, self.tmpStr(id).ptr, enumOrInt(c.cui_status, status), &opts_c);
 }
 
-pub fn reactions(self: *Ui, id: []const u8, items: *c.cui_reaction, count: i32) i32 {
-    return c.cui_reactions(self.h, self.tmpStr(id).ptr, @ptrCast(items), count);
+pub fn reactions(self: *Ui, id: []const u8, items: []c.cui_reaction) i32 {
+    return c.cui_reactions(self.h, self.tmpStr(id).ptr, @ptrCast(items.ptr), @intCast(items.len));
 }
 
 pub fn speed_dial(self: *Ui, id: []const u8, actions: []const SpeedAction, opts: SpeedDialOpts) i32 {
-    const actions_c = self.structArr(c.cui_speed_action, actions);
+    const zp2_c = self.structArr(c.cui_speed_action, actions);
     const opts_c = self.cvtOpts(c.cui_speed_dial_opts, opts);
-    return c.cui_speed_dial_ex(self.h, self.tmpStr(id).ptr, actions_c, @intCast(actions.len), &opts_c);
+    return c.cui_speed_dial_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(actions.len), &opts_c);
 }
 
 /// Theme switcher: light, dark and (optionally) system, as a compact icon
@@ -4909,27 +5516,23 @@ pub fn theme_toggle(self: *Ui) bool {
 pub fn user_menu(self: *Ui, name: []const u8, opts: UserMenuOpts) bool {
     const opts_c = self.cvtOpts(c.cui_user_menu_opts, opts);
     if (!(c.cui_user_menu_begin(self.h, self.tmpStr(name).ptr, &opts_c))) return false;
-    self.pushEnd(c.cui_user_menu_end);
+    self.pushEnd(zui_end_adapter_user_menu_end);
     return true;
 }
 
 pub fn swipe_item(self: *Ui, id: []const u8, left: []const SwipeAction, right: []const SwipeAction) void {
-    const left_c = self.structArr(c.cui_swipe_action, left);
-    const right_c = self.structArr(c.cui_swipe_action, right);
-    self.pushEnd(c.cui_cui_swipe_item_end);
-c.cui_swipe_item_begin(self.h, self.tmpStr(id).ptr, left_c, @intCast(left.len), right_c, @intCast(right.len));
-}
-
-pub fn swipe_item_end(self: *Ui) i32 {
-    return c.cui_swipe_item_end(self.h);
+    const zp2_c = self.structArr(c.cui_swipe_action, left);
+    const zp4_c = self.structArr(c.cui_swipe_action, right);
+    self.pushEnd(zui_end_adapter_swipe_item_end);
+c.cui_swipe_item_begin(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(left.len), zp4_c, @intCast(right.len));
 }
 
 /// Returns a visible range for the current row count, even after the grid shrinks.
 pub fn data_grid(self: *Ui, id: []const u8, columns: []const GridColumn, row_count: i32, first: *i32, last: *i32, opts: GridOpts) void {
-    const columns_c = self.structArr(c.cui_grid_column, columns);
+    const zp2_c = self.structArr(c.cui_grid_column, columns);
     const opts_c = self.cvtOpts(c.cui_grid_opts, opts);
-    self.pushEnd(c.cui_cui_data_grid_end);
-_ = c.cui_data_grid_begin_ex(self.h, self.tmpStr(id).ptr, columns_c, @intCast(columns.len), row_count, @ptrCast(first), @ptrCast(last), &opts_c);
+    self.pushEnd(zui_end_adapter_data_grid_end);
+_ = c.cui_data_grid_begin_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(columns.len), row_count, @ptrCast(first), @ptrCast(last), &opts_c);
 }
 
 pub fn data_grid_row(self: *Ui, row_arg: i32) bool {
@@ -4947,16 +5550,12 @@ pub fn data_grid_cell_text(self: *Ui, s: []const u8) void {
 /// Editable text cell: double click (or Enter on the cursor row) to edit,
 /// Enter or clicking away commits, Esc reverts. True when committed.
 pub fn data_grid_cell_edit(self: *Ui, buf: []u8, cap: usize) bool {
-    return c.cui_data_grid_cell_edit(self.h, buf.ptr, buf.len, cap);
+    return c.cui_data_grid_cell_edit(self.h, buf.ptr, cap);
 }
 
 /// The same editable text, inside the current cell (after an avatar, say).
 pub fn data_grid_edit(self: *Ui, buf: []u8, cap: usize) bool {
-    return c.cui_data_grid_edit(self.h, buf.ptr, buf.len, cap);
-}
-
-pub fn data_grid_end(self: *Ui) void {
-    c.cui_data_grid_end(self.h);
+    return c.cui_data_grid_edit(self.h, buf.ptr, cap);
 }
 
 /// Tree cell: indentation, a disclosure chevron and a label, for tree tables
@@ -4965,16 +5564,16 @@ pub fn tree_cell(self: *Ui, label: []const u8, depth: i32, has_children: bool, o
     return c.cui_tree_cell(self.h, self.tmpStr(label).ptr, depth, has_children, open, self.tmpStr(icon_name).ptr);
 }
 
-pub fn filter_bar(self: *Ui, id: []const u8, fields: []const FilterField, search_arg: []u8, search_cap: usize) bool {
-    const fields_c = self.structArr(c.cui_filter_field, fields);
-    return c.cui_filter_bar(self.h, self.tmpStr(id).ptr, fields_c, @intCast(fields.len), search_arg.ptr, search_arg.len, search_cap);
+pub fn filter_bar(self: *Ui, id: []const u8, fields: []const FilterField, selected: *u32, search_arg: []u8, search_cap: usize) bool {
+    const zp2_c = self.structArr(c.cui_filter_field, fields);
+    return c.cui_filter_bar(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(fields.len), @ptrCast(selected), search_arg.ptr, search_cap);
 }
 
-pub fn tree_table(self: *Ui, id: []const u8, columns: []const GridColumn, nodes: *c.cui_tree_node, node_count: i32, opts: TreeTableOpts) void {
-    const columns_c = self.structArr(c.cui_grid_column, columns);
+pub fn tree_table(self: *Ui, id: []const u8, columns: []const GridColumn, nodes: []c.cui_tree_node, opts: TreeTableOpts) void {
+    const zp2_c = self.structArr(c.cui_grid_column, columns);
     const opts_c = self.cvtOpts(c.cui_tree_table_opts, opts);
-    self.pushEnd(c.cui_cui_tree_table_end);
-c.cui_tree_table_begin_ex(self.h, self.tmpStr(id).ptr, columns_c, @intCast(columns.len), @ptrCast(nodes), node_count, &opts_c);
+    self.pushEnd(zui_end_adapter_tree_table_end);
+c.cui_tree_table_begin_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(columns.len), @ptrCast(nodes.ptr), @intCast(nodes.len), &opts_c);
 }
 
 /// The next row in view: returns its node, or -1 when done. Then build its
@@ -4993,38 +5592,30 @@ pub fn tree_table_depth(self: *Ui) i32 {
     return c.cui_tree_table_depth(self.h);
 }
 
-pub fn tree_table_end(self: *Ui) TreeTableEvents {
-    return cvtBackStruct(TreeTableEvents, c.cui_tree_table_end(self.h));
-}
-
 pub fn path_bar(self: *Ui, id: []const u8, segments: []const []const u8, opts: PathBarOpts) PathBarResult {
-    const segments_c = self.strArr(segments);
+    const zp2_c = self.strArr(segments);
     const opts_c = self.cvtOpts(c.cui_path_bar_opts, opts);
-    return cvtBackStruct(PathBarResult, c.cui_path_bar_ex(self.h, self.tmpStr(id).ptr, segments_c, @intCast(segments.len), &opts_c));
+    return cvtBackStruct(PathBarResult, c.cui_path_bar_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(segments.len), &opts_c));
 }
 
 /// True while the menu of separator *segment is showing: build menu items
 /// for the children of that segment, then call cui_path_bar_menu_end.
 pub fn path_bar_menu(self: *Ui, id: []const u8, segment: *i32) void {
-    self.pushEnd(c.cui_cui_path_bar_menu_end);
+    self.pushEnd(zui_end_adapter_path_bar_menu_end);
 _ = c.cui_path_bar_menu_begin(self.h, self.tmpStr(id).ptr, @ptrCast(segment));
-}
-
-pub fn path_bar_menu_end(self: *Ui) void {
-    c.cui_path_bar_menu_end(self.h);
 }
 
 /// path: the folder shown, yours; the browser writes it as you move around.
 pub fn file_browser(self: *Ui, id: []const u8, path: []u8, path_cap: usize, opts: FileBrowserOpts) FileBrowserResult {
     const opts_c = self.cvtOpts(c.cui_file_browser_opts, opts);
-    return cvtBackStruct(FileBrowserResult, c.cui_file_browser_ex(self.h, self.tmpStr(id).ptr, path.ptr, path.len, path_cap, &opts_c));
+    return cvtBackStruct(FileBrowserResult, c.cui_file_browser_ex(self.h, self.tmpStr(id).ptr, path.ptr, path_cap, &opts_c));
 }
 
 /// True once, with the chosen path in out, when the dialog is confirmed;
 /// *open turns false then, or on Cancel and Esc.
 pub fn file_picker(self: *Ui, id: []const u8, open: *bool, out: []u8, out_cap: usize, opts: FilePickerOpts) bool {
     const opts_c = self.cvtOpts(c.cui_file_picker_opts, opts);
-    return c.cui_file_picker_ex(self.h, self.tmpStr(id).ptr, open, out.ptr, out.len, out_cap, &opts_c);
+    return c.cui_file_picker_ex(self.h, self.tmpStr(id).ptr, open, out.ptr, out_cap, &opts_c);
 }
 
 pub fn code_block(self: *Ui, id: []const u8, code_arg: []const u8, opts: CodeOpts) void {
@@ -5044,7 +5635,7 @@ pub fn markdown(self: *Ui, id: []const u8, s: []const u8, opts: MarkdownOpts) Ma
 
 pub fn code_editor(self: *Ui, id: []const u8, buf: []u8, cap: usize, opts: CodeEditorOpts) CodeEditorResult {
     const opts_c = self.cvtOpts(c.cui_code_editor_opts, opts);
-    return cvtBackStruct(CodeEditorResult, c.cui_code_editor_ex(self.h, self.tmpStr(id).ptr, buf.ptr, buf.len, cap, &opts_c));
+    return cvtBackStruct(CodeEditorResult, c.cui_code_editor_ex(self.h, self.tmpStr(id).ptr, buf.ptr, cap, &opts_c));
 }
 
 /// On the editor's next frame: put the caret at a line and column (1 based),
@@ -5091,18 +5682,18 @@ pub fn comment(self: *Ui, id: []const u8, author: []const u8, s: []const u8, opt
 }
 
 pub fn presence(self: *Ui, id: []const u8, users: []const PresenceUser, max_visible: i32, size_arg: f32) void {
-    const users_c = self.structArr(c.cui_presence_user, users);
-    c.cui_presence(self.h, self.tmpStr(id).ptr, users_c, @intCast(users.len), max_visible, size_arg);
+    const zp2_c = self.structArr(c.cui_presence_user, users);
+    c.cui_presence(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(users.len), max_visible, size_arg);
 }
 
 pub fn carousel(self: *Ui, id: []const u8, count: i32, index: *i32, opts: CarouselOpts) void {
     const opts_c = self.cvtOpts(c.cui_carousel_opts, opts);
-    self.pushEnd(c.cui_carousel_end);
+    self.pushEnd(zui_end_adapter_carousel_end);
 _ = c.cui_carousel_begin(self.h, self.tmpStr(id).ptr, count, @ptrCast(index), &opts_c);
 }
 
 pub fn carousel_slide(self: *Ui) void {
-    self.pushEnd(c.cui_carousel_slide_end);
+    self.pushEnd(zui_end_adapter_carousel_slide_end);
 c.cui_carousel_slide_begin(self.h);
 }
 
@@ -5113,17 +5704,13 @@ pub fn image_compare(self: *Ui, id: []const u8, before: usize, after: usize, pos
 
 pub fn card_stack(self: *Ui, id: []const u8, count: i32, opts: CardStackOpts) void {
     const opts_c = self.cvtOpts(c.cui_card_stack_opts, opts);
-    self.pushEnd(c.cui_cui_card_stack_end);
+    self.pushEnd(zui_end_adapter_card_stack_end);
 c.cui_card_stack_begin(self.h, self.tmpStr(id).ptr, count, &opts_c);
 }
 
 pub fn card_stack_item(self: *Ui, depth: i32) void {
-    self.pushEnd(c.cui_card_stack_item_end);
+    self.pushEnd(zui_end_adapter_card_stack_item_end);
 c.cui_card_stack_item_begin(self.h, depth);
-}
-
-pub fn card_stack_end(self: *Ui) i32 {
-    return c.cui_card_stack_end(self.h);
 }
 
 pub fn counter(self: *Ui, id: []const u8, value: f64, opts: CounterOpts) void {
@@ -5132,9 +5719,9 @@ pub fn counter(self: *Ui, id: []const u8, value: f64, opts: CounterOpts) void {
 }
 
 pub fn ticker(self: *Ui, id: []const u8, items: []const TickerItem, opts: TickerOpts) void {
-    const items_c = self.structArr(c.cui_ticker_item, items);
+    const zp2_c = self.structArr(c.cui_ticker_item, items);
     const opts_c = self.cvtOpts(c.cui_ticker_opts, opts);
-    c.cui_ticker_ex(self.h, self.tmpStr(id).ptr, items_c, @intCast(items.len), &opts_c);
+    c.cui_ticker_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(items.len), &opts_c);
 }
 
 pub fn heatmap(self: *Ui, id: []const u8, values: []const f32, cols: i32, opts: HeatmapOpts) i32 {
@@ -5143,66 +5730,65 @@ pub fn heatmap(self: *Ui, id: []const u8, values: []const f32, cols: i32, opts: 
 }
 
 pub fn calendar_heatmap(self: *Ui, id: []const u8, start: Date, values: []const f32, days: i32, opts: CalendarHeatmapOpts) i32 {
-    const start_c = self.cvtOpts(c.cui_date, start);
+    const zp2_c = cvtFree(c.cui_date, start);
     const opts_c = self.cvtOpts(c.cui_calendar_heatmap_opts, opts);
-    return c.cui_calendar_heatmap_ex(self.h, self.tmpStr(id).ptr, &start_c, values.ptr, @intCast(values.len), days, &opts_c);
+    return c.cui_calendar_heatmap_ex(self.h, self.tmpStr(id).ptr, zp2_c, values.ptr, days, &opts_c);
 }
 
 pub fn treemap(self: *Ui, id: []const u8, items: []const VizItem, opts: TreemapOpts) i32 {
-    const items_c = self.structArr(c.cui_viz_item, items);
+    const zp2_c = self.structArr(c.cui_viz_item, items);
     const opts_c = self.cvtOpts(c.cui_treemap_opts, opts);
-    return c.cui_treemap_ex(self.h, self.tmpStr(id).ptr, items_c, @intCast(items.len), &opts_c);
+    return c.cui_treemap_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(items.len), &opts_c);
 }
 
 pub fn radar_chart(self: *Ui, id: []const u8, series: []const Series, axes: []const []const u8, opts: RadarOpts) i32 {
-    const series_c = self.structArr(c.cui_series, series);
-    const axes_c = self.strArr(axes);
+    const zp2_c = self.structArr(c.cui_series, series);
+    const zp4_c = self.strArr(axes);
     const opts_c = self.cvtOpts(c.cui_radar_opts, opts);
-    return c.cui_radar_chart_ex(self.h, self.tmpStr(id).ptr, series_c, @intCast(series.len), axes_c, @intCast(axes.len), &opts_c);
+    return c.cui_radar_chart_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(series.len), zp4_c, @intCast(axes.len), &opts_c);
 }
 
 pub fn funnel(self: *Ui, id: []const u8, stages: []const VizItem, opts: FunnelOpts) i32 {
-    const stages_c = self.structArr(c.cui_viz_item, stages);
+    const zp2_c = self.structArr(c.cui_viz_item, stages);
     const opts_c = self.cvtOpts(c.cui_funnel_opts, opts);
-    return c.cui_funnel_ex(self.h, self.tmpStr(id).ptr, stages_c, @intCast(stages.len), &opts_c);
+    return c.cui_funnel_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(stages.len), &opts_c);
 }
 
 /// Returns the clicked node index, node_count + the clicked input link index, or -1.
 pub fn sankey(self: *Ui, id: []const u8, nodes: []const []const u8, links: []const SankeyLink, opts: SankeyOpts) i32 {
-    const nodes_c = self.strArr(nodes);
-    const links_c = self.structArr(c.cui_sankey_link, links);
+    const zp2_c = self.strArr(nodes);
+    const zp4_c = self.structArr(c.cui_sankey_link, links);
     const opts_c = self.cvtOpts(c.cui_sankey_opts, opts);
-    return c.cui_sankey_ex(self.h, self.tmpStr(id).ptr, nodes_c, @intCast(nodes.len), links_c, @intCast(links.len), &opts_c);
+    return c.cui_sankey_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(nodes.len), zp4_c, @intCast(links.len), &opts_c);
 }
 
 pub fn waffle(self: *Ui, id: []const u8, items: []const VizItem, opts: WaffleOpts) i32 {
-    const items_c = self.structArr(c.cui_viz_item, items);
+    const zp2_c = self.structArr(c.cui_viz_item, items);
     const opts_c = self.cvtOpts(c.cui_waffle_opts, opts);
-    return c.cui_waffle_ex(self.h, self.tmpStr(id).ptr, items_c, @intCast(items.len), &opts_c);
+    return c.cui_waffle_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(items.len), &opts_c);
 }
 
 pub fn split_bar(self: *Ui, id: []const u8, items: []const VizItem, opts: SplitBarOpts) i32 {
-    const items_c = self.structArr(c.cui_viz_item, items);
+    const zp2_c = self.structArr(c.cui_viz_item, items);
     const opts_c = self.cvtOpts(c.cui_split_bar_opts, opts);
-    return c.cui_split_bar_ex(self.h, self.tmpStr(id).ptr, items_c, @intCast(items.len), &opts_c);
+    return c.cui_split_bar_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(items.len), &opts_c);
 }
 
 pub fn bar_list(self: *Ui, id: []const u8, items: []const VizItem, opts: BarListOpts) i32 {
-    const items_c = self.structArr(c.cui_viz_item, items);
+    const zp2_c = self.structArr(c.cui_viz_item, items);
     const opts_c = self.cvtOpts(c.cui_bar_list_opts, opts);
-    return c.cui_bar_list_ex(self.h, self.tmpStr(id).ptr, items_c, @intCast(items.len), &opts_c);
+    return c.cui_bar_list_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(items.len), &opts_c);
 }
 
 pub fn activity_rings(self: *Ui, id: []const u8, rings: []const VizItem, opts: RingsOpts) i32 {
-    const rings_c = self.structArr(c.cui_viz_item, rings);
+    const zp2_c = self.structArr(c.cui_viz_item, rings);
     const opts_c = self.cvtOpts(c.cui_rings_opts, opts);
-    return c.cui_activity_rings_ex(self.h, self.tmpStr(id).ptr, rings_c, @intCast(rings.len), &opts_c);
+    return c.cui_activity_rings_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(rings.len), &opts_c);
 }
 
-pub fn scatter_chart(self: *Ui, id: []const u8, series: []const ScatterSeries, opts: ScatterOpts) i32 {
-    const series_c = self.structArr(c.cui_scatter_series, series);
+pub fn scatter_chart(self: *Ui, id: []const u8, series: []const c.cui_scatter_series, opts: ScatterOpts) i32 {
     const opts_c = self.cvtOpts(c.cui_scatter_opts, opts);
-    return c.cui_scatter_chart_ex(self.h, self.tmpStr(id).ptr, series_c, @intCast(series.len), &opts_c);
+    return c.cui_scatter_chart_ex(self.h, self.tmpStr(id).ptr, @ptrCast(series.ptr), @intCast(series.len), &opts_c);
 }
 
 pub fn radial_gauge(self: *Ui, id: []const u8, value: f32, min: f32, max: f32, opts: RadialGaugeOpts) void {
@@ -5212,9 +5798,9 @@ pub fn radial_gauge(self: *Ui, id: []const u8, value: f32, min: f32, max: f32, o
 
 /// Returns the candle under the crosshair (pointer or keys), or -1.
 pub fn candlestick(self: *Ui, id: []const u8, candles: []const Candle, opts: CandlestickOpts) i32 {
-    const candles_c = self.structArr(c.cui_candle, candles);
+    const zp2_c = self.structArr(c.cui_candle, candles);
     const opts_c = self.cvtOpts(c.cui_candlestick_opts, opts);
-    return c.cui_candlestick_ex(self.h, self.tmpStr(id).ptr, candles_c, @intCast(candles.len), &opts_c);
+    return c.cui_candlestick_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(candles.len), &opts_c);
 }
 
 /// Text with a highlight sweeping across it, for "Thinking..." states.
@@ -5239,9 +5825,9 @@ pub fn text_reveal(self: *Ui, id: []const u8, s: []const u8, opts: TextFxOpts) v
 
 /// One word at a time; the next one rolls up into place and the width follows.
 pub fn word_rotate(self: *Ui, id: []const u8, words: []const []const u8, interval: f32, opts: TextFxOpts) void {
-    const words_c = self.strArr(words);
+    const zp2_c = self.strArr(words);
     const opts_c = self.cvtOpts(c.cui_text_fx_opts, opts);
-    c.cui_word_rotate_ex(self.h, self.tmpStr(id).ptr, words_c, @intCast(words.len), interval, &opts_c);
+    c.cui_word_rotate_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(words.len), interval, &opts_c);
 }
 
 /// A figure whose changed digits roll into place: up when the value rises, down
@@ -5259,7 +5845,7 @@ pub fn gradient_text(self: *Ui, s: []const u8, opts: GradientTextOpts) void {
 
 pub fn spotlight(self: *Ui, id: []const u8, opts: SpotlightOpts) void {
     const opts_c = self.cvtOpts(c.cui_spotlight_opts, opts);
-    self.pushEnd(c.cui_spotlight_end);
+    self.pushEnd(zui_end_adapter_spotlight_end);
 c.cui_spotlight_begin(self.h, self.tmpStr(id).ptr, &opts_c);
 }
 
@@ -5270,7 +5856,7 @@ pub fn loader(self: *Ui, opts: LoaderOpts) void {
 
 pub fn dock(self: *Ui, id: []const u8, opts: DockOpts) void {
     const opts_c = self.cvtOpts(c.cui_dock_opts, opts);
-    self.pushEnd(c.cui_dock_end);
+    self.pushEnd(zui_end_adapter_dock_end);
 c.cui_dock_begin(self.h, self.tmpStr(id).ptr, &opts_c);
 }
 
@@ -5284,9 +5870,9 @@ pub fn dock_separator(self: *Ui) void {
 }
 
 pub fn tab_bar(self: *Ui, id: []const u8, items: []const TabBarItem, selected: *i32, opts: TabBarOpts) bool {
-    const items_c = self.structArr(c.cui_tab_bar_item, items);
+    const zp2_c = self.structArr(c.cui_tab_bar_item, items);
     const opts_c = self.cvtOpts(c.cui_tab_bar_opts, opts);
-    return c.cui_tab_bar_ex(self.h, self.tmpStr(id).ptr, items_c, @intCast(items.len), @ptrCast(selected), &opts_c);
+    return c.cui_tab_bar_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(items.len), @ptrCast(selected), &opts_c);
 }
 
 pub fn control_tile(self: *Ui, label: []const u8, on: *bool, opts: TileOpts) bool {
@@ -5307,7 +5893,7 @@ pub fn now_playing(self: *Ui, id: []const u8, np: *c.cui_now_playing, opts: NowP
 pub fn reasoning(self: *Ui, id: []const u8, opts: ReasoningOpts) bool {
     const opts_c = self.cvtOpts(c.cui_reasoning_opts, opts);
     if (!(c.cui_reasoning_begin(self.h, self.tmpStr(id).ptr, &opts_c))) return false;
-    self.pushEnd(c.cui_reasoning_end);
+    self.pushEnd(zui_end_adapter_reasoning_end);
     return true;
 }
 
@@ -5317,9 +5903,9 @@ pub fn tool_call(self: *Ui, id: []const u8, name: []const u8, opts: ToolCallOpts
 }
 
 pub fn agent_plan(self: *Ui, id: []const u8, steps: []const PlanStep, opts: AgentPlanOpts) i32 {
-    const steps_c = self.structArr(c.cui_plan_step, steps);
+    const zp2_c = self.structArr(c.cui_plan_step, steps);
     const opts_c = self.cvtOpts(c.cui_agent_plan_opts, opts);
-    return c.cui_agent_plan_ex(self.h, self.tmpStr(id).ptr, steps_c, @intCast(steps.len), &opts_c);
+    return c.cui_agent_plan_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(steps.len), &opts_c);
 }
 
 pub fn agent_status(self: *Ui, s: []const u8, opts: AgentStatusOpts) void {
@@ -5328,13 +5914,8 @@ pub fn agent_status(self: *Ui, s: []const u8, opts: AgentStatusOpts) void {
 }
 
 pub fn source_list(self: *Ui, id: []const u8, sources: []const Source) i32 {
-    const sources_c = self.structArr(c.cui_source, sources);
-    return c.cui_source_list(self.h, self.tmpStr(id).ptr, sources_c, @intCast(sources.len));
-}
-
-pub fn citation(self: *Ui, number_arg: i32, source: Source) bool {
-    const source_c = self.cvtOpts(c.cui_source, source);
-    return c.cui_citation(self.h, number_arg, &source_c);
+    const zp2_c = self.structArr(c.cui_source, sources);
+    return c.cui_source_list(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(sources.len));
 }
 
 pub fn context_meter(self: *Ui, id: []const u8, used: f32, limit: f32, opts: ContextOpts) void {
@@ -5348,20 +5929,20 @@ pub fn response_actions(self: *Ui, id: []const u8, opts: ResponseActionsOpts) i3
 }
 
 pub fn prompt_suggestions(self: *Ui, id: []const u8, items: []const PromptSuggestion, opts: PromptSuggestionsOpts) i32 {
-    const items_c = self.structArr(c.cui_prompt_suggestion, items);
+    const zp2_c = self.structArr(c.cui_prompt_suggestion, items);
     const opts_c = self.cvtOpts(c.cui_prompt_suggestions_opts, opts);
-    return c.cui_prompt_suggestions_ex(self.h, self.tmpStr(id).ptr, items_c, @intCast(items.len), &opts_c);
+    return c.cui_prompt_suggestions_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(items.len), &opts_c);
 }
 
 pub fn model_picker(self: *Ui, id: []const u8, models: []const Model, selected: *i32, opts: ModelPickerOpts) bool {
-    const models_c = self.structArr(c.cui_model, models);
+    const zp2_c = self.structArr(c.cui_model, models);
     const opts_c = self.cvtOpts(c.cui_model_picker_opts, opts);
-    return c.cui_model_picker_ex(self.h, self.tmpStr(id).ptr, models_c, @intCast(models.len), @ptrCast(selected), &opts_c);
+    return c.cui_model_picker_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(models.len), @ptrCast(selected), &opts_c);
 }
 
 pub fn chat_composer(self: *Ui, id: []const u8, buf: []u8, cap: usize, opts: ComposerOpts) i32 {
     const opts_c = self.cvtOpts(c.cui_composer_opts, opts);
-    return c.cui_chat_composer_ex(self.h, self.tmpStr(id).ptr, buf.ptr, buf.len, cap, &opts_c);
+    return c.cui_chat_composer_ex(self.h, self.tmpStr(id).ptr, buf.ptr, cap, &opts_c);
 }
 
 pub fn voice_orb(self: *Ui, id: []const u8, st: VoiceState, level: f32, opts: VoiceOrbOpts) bool {
@@ -5384,28 +5965,19 @@ pub fn voice_session(self: *Ui, id: []const u8, st: VoiceState, levels: []const 
     return c.cui_voice_session_ex(self.h, self.tmpStr(id).ptr, enumOrInt(c.cui_voice_state, st), levels.ptr, @intCast(levels.len), &opts_c);
 }
 
-pub fn kanban(self: *Ui, id: []const u8) void {
-    self.pushEnd(c.cui_cui_kanban_end);
-c.cui_kanban_begin(self.h, self.tmpStr(id).ptr);
+pub fn kanban_begin(self: *Ui, id: []const u8) void {
+    c.cui_kanban_begin(self.h, self.tmpStr(id).ptr);
 }
 
 pub fn kanban_column(self: *Ui, title: []const u8, card_count: i32, opts: KanbanColumnOpts) void {
     const opts_c = self.cvtOpts(c.cui_kanban_column_opts, opts);
-    self.pushEnd(c.cui_cui_kanban_column_end);
+    self.pushEnd(zui_end_adapter_kanban_column_end);
 _ = c.cui_kanban_column_begin_ex(self.h, self.tmpStr(title).ptr, card_count, &opts_c);
 }
 
 pub fn kanban_card(self: *Ui, card_id: i32) void {
-    self.pushEnd(c.cui_cui_kanban_card_end);
+    self.pushEnd(zui_end_adapter_kanban_card_end);
 _ = c.cui_kanban_card_begin(self.h, card_id);
-}
-
-pub fn kanban_card_end(self: *Ui) void {
-    c.cui_kanban_card_end(self.h);
-}
-
-pub fn kanban_column_end(self: *Ui) void {
-    c.cui_kanban_column_end(self.h);
 }
 
 pub fn kanban_end(self: *Ui, move: *c.cui_kanban_move) bool {
@@ -5414,29 +5986,29 @@ pub fn kanban_end(self: *Ui, move: *c.cui_kanban_move) bool {
 
 /// Returns the activated event index or -1. Read-only events still activate.
 /// Pointer activation requires staying within the drag threshold through release.
-pub fn week_calendar(self: *Ui, id: []const u8, week_start: Date, events: *c.cui_cal_event, count: i32, opts: WeekOpts) i32 {
-    const week_start_c = self.cvtOpts(c.cui_date, week_start);
+pub fn week_calendar(self: *Ui, id: []const u8, week_start: Date, events: []c.cui_cal_event, opts: WeekOpts) i32 {
+    const zp2_c = cvtFree(c.cui_date, week_start);
     const opts_c = self.cvtOpts(c.cui_week_opts, opts);
-    return c.cui_week_calendar_ex(self.h, self.tmpStr(id).ptr, &week_start_c, @ptrCast(events), count, &opts_c);
+    return c.cui_week_calendar_ex(self.h, self.tmpStr(id).ptr, zp2_c, @ptrCast(events.ptr), @intCast(events.len), &opts_c);
 }
 
 pub fn month_calendar(self: *Ui, id: []const u8, month: *c.cui_date, events: []const MonthEvent, opts: MonthOpts) MonthResult {
-    const events_c = self.structArr(c.cui_month_event, events);
+    const zp3_c = self.structArr(c.cui_month_event, events);
     const opts_c = self.cvtOpts(c.cui_month_opts, opts);
-    return cvtBackStruct(MonthResult, c.cui_month_calendar_ex(self.h, self.tmpStr(id).ptr, @ptrCast(month), events_c, @intCast(events.len), &opts_c));
+    return cvtBackStruct(MonthResult, c.cui_month_calendar_ex(self.h, self.tmpStr(id).ptr, @ptrCast(month), zp3_c, @intCast(events.len), &opts_c));
 }
 
 /// Returns the activated task index or -1. Read-only tasks still activate.
-pub fn gantt(self: *Ui, id: []const u8, tasks: *c.cui_gantt_task, count: i32, origin: Date, days: i32, opts: GanttOpts) i32 {
-    const origin_c = self.cvtOpts(c.cui_date, origin);
+pub fn gantt(self: *Ui, id: []const u8, tasks: []c.cui_gantt_task, origin: Date, days: i32, opts: GanttOpts) i32 {
+    const zp4_c = cvtFree(c.cui_date, origin);
     const opts_c = self.cvtOpts(c.cui_gantt_opts, opts);
-    return c.cui_gantt_ex(self.h, self.tmpStr(id).ptr, @ptrCast(tasks), count, &origin_c, days, &opts_c);
+    return c.cui_gantt_ex(self.h, self.tmpStr(id).ptr, @ptrCast(tasks.ptr), @intCast(tasks.len), zp4_c, days, &opts_c);
 }
 
 pub fn hover_card(self: *Ui, id: []const u8, opts: HoverCardOpts) bool {
     const opts_c = self.cvtOpts(c.cui_hover_card_opts, opts);
     if (!(c.cui_hover_card_begin(self.h, self.tmpStr(id).ptr, &opts_c))) return false;
-    self.pushEnd(c.cui_hover_card_end);
+    self.pushEnd(zui_end_adapter_hover_card_end);
     return true;
 }
 
@@ -5453,13 +6025,13 @@ pub fn expandable_text(self: *Ui, id: []const u8, s: []const u8, opts: Expandabl
 pub fn expandable_card(self: *Ui, title: []const u8, open: *bool, opts: ExpandableCardOpts) bool {
     const opts_c = self.cvtOpts(c.cui_expandable_card_opts, opts);
     if (!(c.cui_expandable_card_begin(self.h, self.tmpStr(title).ptr, open, &opts_c))) return false;
-    self.pushEnd(c.cui_expandable_card_end);
+    self.pushEnd(zui_end_adapter_expandable_card_end);
     return true;
 }
 
 pub fn toc(self: *Ui, scroll_id: []const u8, items: []const TocItem) i32 {
-    const items_c = self.structArr(c.cui_toc_item, items);
-    return c.cui_toc(self.h, self.tmpStr(scroll_id).ptr, items_c, @intCast(items.len));
+    const zp2_c = self.structArr(c.cui_toc_item, items);
+    return c.cui_toc(self.h, self.tmpStr(scroll_id).ptr, zp2_c, @intCast(items.len));
 }
 
 pub fn toc_anchor(self: *Ui, anchor: []const u8) void {
@@ -5476,21 +6048,21 @@ pub fn countdown(self: *Ui, id: []const u8, seconds_left: f64, opts: CountdownOp
     c.cui_countdown_ex(self.h, self.tmpStr(id).ptr, seconds_left, &opts_c);
 }
 
-pub fn checklist(self: *Ui, id: []const u8, steps: *c.cui_check_step, count: i32, opts: ChecklistOpts) i32 {
+pub fn checklist(self: *Ui, id: []const u8, steps: []c.cui_check_step, opts: ChecklistOpts) i32 {
     const opts_c = self.cvtOpts(c.cui_checklist_opts, opts);
-    return c.cui_checklist_ex(self.h, self.tmpStr(id).ptr, @ptrCast(steps), count, &opts_c);
+    return c.cui_checklist_ex(self.h, self.tmpStr(id).ptr, @ptrCast(steps.ptr), @intCast(steps.len), &opts_c);
 }
 
 pub fn veil(self: *Ui, id: []const u8, revealed: *bool, opts: VeilOpts) void {
     const opts_c = self.cvtOpts(c.cui_veil_opts, opts);
-    self.pushEnd(c.cui_veil_end);
+    self.pushEnd(zui_end_adapter_veil_end);
 _ = c.cui_veil_begin_ex(self.h, self.tmpStr(id).ptr, revealed, &opts_c);
 }
 
 pub fn multi_select(self: *Ui, id: []const u8, items: []const []const u8, selected: *bool, opts: MultiSelectOpts) bool {
-    const items_c = self.strArr(items);
+    const zp2_c = self.strArr(items);
     const opts_c = self.cvtOpts(c.cui_multi_select_opts, opts);
-    return c.cui_multi_select_ex(self.h, self.tmpStr(id).ptr, items_c, @intCast(items.len), selected, &opts_c);
+    return c.cui_multi_select_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(items.len), selected, &opts_c);
 }
 
 /// One or two months side by side; click a start and an end.
@@ -5509,9 +6081,9 @@ pub fn time_picker(self: *Ui, id: []const u8, hour: *i32, minute: *i32, opts: Ti
 }
 
 pub fn wheel_picker(self: *Ui, id: []const u8, items: []const []const u8, index: *i32, opts: WheelOpts) bool {
-    const items_c = self.strArr(items);
+    const zp2_c = self.strArr(items);
     const opts_c = self.cvtOpts(c.cui_wheel_opts, opts);
-    return c.cui_wheel_picker_ex(self.h, self.tmpStr(id).ptr, items_c, @intCast(items.len), @ptrCast(index), &opts_c);
+    return c.cui_wheel_picker_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(items.len), @ptrCast(index), &opts_c);
 }
 
 /// Time dial: a clock face. Drag the hand to set hours, then minutes.
@@ -5524,9 +6096,9 @@ pub fn ruler_slider(self: *Ui, label: []const u8, value: *f32, min: f32, max: f3
     return c.cui_ruler_slider_ex(self.h, self.tmpStr(label).ptr, @ptrCast(value), min, max, &opts_c);
 }
 
-pub fn histogram_slider(self: *Ui, label: []const u8, bins: []const f32, lo: *f32, hi: *f32, min: f32, max: f32, opts: HistogramOpts) bool {
+pub fn histogram_slider(self: *Ui, label: []const u8, bins: []const f32, bin_count: i32, lo: *f32, hi: *f32, min: f32, max: f32, opts: HistogramOpts) bool {
     const opts_c = self.cvtOpts(c.cui_histogram_opts, opts);
-    return c.cui_histogram_slider_ex(self.h, self.tmpStr(label).ptr, bins.ptr, @intCast(bins.len), @ptrCast(lo), @ptrCast(hi), min, max, &opts_c);
+    return c.cui_histogram_slider_ex(self.h, self.tmpStr(label).ptr, bins.ptr, bin_count, @ptrCast(lo), @ptrCast(hi), min, max, &opts_c);
 }
 
 pub fn knob(self: *Ui, id: []const u8, value: *f32, min: f32, max: f32, opts: KnobOpts) bool {
@@ -5562,13 +6134,13 @@ pub fn dropzone(self: *Ui, id: []const u8, opts: DropzoneOpts) i32 {
 /// Avatar upload: a round avatar that takes a dropped image, with a camera
 /// badge on hover. Returns 1 when *image changed, -1 when clicked (browse),
 /// 0 otherwise. A dropped image is loaded with cui_image_load.
-pub fn avatar_upload(self: *Ui, id: []const u8, name: []const u8, size_arg: f32) i32 {
-    return c.cui_avatar_upload(self.h, self.tmpStr(id).ptr, self.tmpStr(name).ptr, size_arg);
+pub fn avatar_upload(self: *Ui, id: []const u8, name: []const u8, image: *usize, size_arg: f32) i32 {
+    return c.cui_avatar_upload(self.h, self.tmpStr(id).ptr, self.tmpStr(name).ptr, @ptrCast(image), size_arg);
 }
 
 pub fn inline_edit(self: *Ui, id: []const u8, buf: []u8, cap: usize, opts: InlineEditOpts) i32 {
     const opts_c = self.cvtOpts(c.cui_inline_edit_opts, opts);
-    return c.cui_inline_edit_ex(self.h, self.tmpStr(id).ptr, buf.ptr, buf.len, cap, &opts_c);
+    return c.cui_inline_edit_ex(self.h, self.tmpStr(id).ptr, buf.ptr, cap, &opts_c);
 }
 
 pub fn scrub(self: *Ui, label: []const u8, value: *f32, min: f32, max: f32, opts: ScrubOpts) bool {
@@ -5587,28 +6159,20 @@ pub fn shortcut_recorder(self: *Ui, id: []const u8, combo: *c.cui_key_combo, opt
 }
 
 pub fn shortcut_label(self: *Ui, combo: KeyCombo) []const u8 {
-    const combo_c = self.cvtOpts(c.cui_key_combo, combo);
-    return spanOrEmpty(c.cui_shortcut_label(self.h, &combo_c));
+    const zp1_c = cvtFree(c.cui_key_combo, combo);
+    return spanOrEmpty(c.cui_shortcut_label(self.h, zp1_c));
 }
 
 pub fn node_editor(self: *Ui, id: []const u8, view: *c.cui_node_view, opts: NodeEditorOpts) void {
     const opts_c = self.cvtOpts(c.cui_node_editor_opts, opts);
-    self.pushEnd(c.cui_cui_node_editor_end);
+    self.pushEnd(zui_end_adapter_node_editor_end);
 _ = c.cui_node_editor_begin_ex(self.h, self.tmpStr(id).ptr, @ptrCast(view), &opts_c);
-}
-
-pub fn node_editor_end(self: *Ui) void {
-    c.cui_node_editor_end(self.h);
 }
 
 pub fn node(self: *Ui, node_id: i32, x: *f32, y: *f32, title: []const u8, opts: NodeOpts) void {
     const opts_c = self.cvtOpts(c.cui_node_opts, opts);
-    self.pushEnd(c.cui_cui_node_end);
+    self.pushEnd(zui_end_adapter_node_end);
 _ = c.cui_node_begin_ex(self.h, node_id, @ptrCast(x), @ptrCast(y), self.tmpStr(title).ptr, &opts_c);
-}
-
-pub fn node_end(self: *Ui) void {
-    c.cui_node_end(self.h);
 }
 
 pub fn node_input(self: *Ui, pin_id: i32, label: []const u8, opts: PinOpts) bool {
@@ -5624,7 +6188,7 @@ pub fn node_output(self: *Ui, pin_id: i32, label: []const u8, opts: PinOpts) boo
 /// A row for ordinary components. They are laid out at 100% and scaled with
 /// the view, so their text is sharpest at 100% zoom and below.
 pub fn node_content(self: *Ui) void {
-    self.pushEnd(c.cui_node_content_end);
+    self.pushEnd(zui_end_adapter_node_content_end);
 c.cui_node_content_begin(self.h);
 }
 
@@ -5649,20 +6213,20 @@ pub fn node_deleted(self: *Ui, node_id: *i32) bool {
 
 pub fn menu_bar(self: *Ui, id: []const u8, opts: MenuBarOpts) void {
     const opts_c = self.cvtOpts(c.cui_menu_bar_opts, opts);
-    self.pushEnd(c.cui_menu_bar_end);
+    self.pushEnd(zui_end_adapter_menu_bar_end);
 c.cui_menu_bar_begin(self.h, self.tmpStr(id).ptr, &opts_c);
 }
 
 pub fn menu_bar_menu(self: *Ui, label: []const u8, opts: MenuBarMenuOpts) bool {
     const opts_c = self.cvtOpts(c.cui_menu_bar_menu_opts, opts);
     if (!(c.cui_menu_bar_menu_begin(self.h, self.tmpStr(label).ptr, &opts_c))) return false;
-    self.pushEnd(c.cui_menu_bar_menu_end);
+    self.pushEnd(zui_end_adapter_menu_bar_menu_end);
     return true;
 }
 
 pub fn toolbar(self: *Ui, id: []const u8, opts: ToolbarOpts) void {
     const opts_c = self.cvtOpts(c.cui_toolbar_opts, opts);
-    self.pushEnd(c.cui_toolbar_end);
+    self.pushEnd(zui_end_adapter_toolbar_end);
 c.cui_toolbar_begin(self.h, self.tmpStr(id).ptr, &opts_c);
 }
 
@@ -5681,14 +6245,14 @@ pub fn toolbar_spacer(self: *Ui) void {
 
 /// A group of items: a raised well in the grouped style, set apart by separators in the others.
 pub fn toolbar_group(self: *Ui) void {
-    self.pushEnd(c.cui_toolbar_group_end);
+    self.pushEnd(zui_end_adapter_toolbar_group_end);
 c.cui_toolbar_group_begin(self.h);
 }
 
 pub fn toolbar_radio(self: *Ui, id: []const u8, icons: []const []const u8, index: *i32, opts: ToolbarRadioOpts) bool {
-    const icons_c = self.strArr(icons);
+    const zp2_c = self.strArr(icons);
     const opts_c = self.cvtOpts(c.cui_toolbar_radio_opts, opts);
-    return c.cui_toolbar_radio_ex(self.h, self.tmpStr(id).ptr, icons_c, @intCast(icons.len), @ptrCast(index), &opts_c);
+    return c.cui_toolbar_radio_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(icons.len), @ptrCast(index), &opts_c);
 }
 
 /// The main action at the end of a grouped toolbar: a larger button filled with the text color.
@@ -5700,9 +6264,9 @@ pub fn toolbar_primary(self: *Ui, icon_name: []const u8, opts: ToolOpts) bool {
 /// A small picker that steps through its choices on each click ("1x", "2x", "4x").
 /// Returns true when *index changed.
 pub fn toolbar_cycle(self: *Ui, id: []const u8, items: []const []const u8, index: *i32, opts: ToolOpts) bool {
-    const items_c = self.strArr(items);
+    const zp2_c = self.strArr(items);
     const opts_c = self.cvtOpts(c.cui_tool_opts, opts);
-    return c.cui_toolbar_cycle_ex(self.h, self.tmpStr(id).ptr, items_c, @intCast(items.len), @ptrCast(index), &opts_c);
+    return c.cui_toolbar_cycle_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(items.len), @ptrCast(index), &opts_c);
 }
 
 /// A small triangle in the corner of the previous component (at the end side) that
@@ -5713,7 +6277,7 @@ pub fn flyout_mark(self: *Ui) void {
 
 pub fn status_bar(self: *Ui, id: []const u8, opts: StatusBarOpts) void {
     const opts_c = self.cvtOpts(c.cui_status_bar_opts, opts);
-    self.pushEnd(c.cui_status_bar_end);
+    self.pushEnd(zui_end_adapter_status_bar_end);
 c.cui_status_bar_begin(self.h, self.tmpStr(id).ptr, &opts_c);
 }
 
@@ -5739,21 +6303,21 @@ pub fn status_bar_progress(self: *Ui, value: f32, opts: StatusProgressOpts) void
 }
 
 pub fn doc_tabs(self: *Ui, id: []const u8, tabs_arg: []const DocTab, selected: *i32, opts: DocTabsOpts) DocTabsResult {
-    const tabs_arg_c = self.structArr(c.cui_doc_tab, tabs_arg);
+    const zp2_c = self.structArr(c.cui_doc_tab, tabs_arg);
     const opts_c = self.cvtOpts(c.cui_doc_tabs_opts, opts);
-    return cvtBackStruct(DocTabsResult, c.cui_doc_tabs_ex(self.h, self.tmpStr(id).ptr, tabs_arg_c, @intCast(tabs_arg.len), @ptrCast(selected), &opts_c));
+    return cvtBackStruct(DocTabsResult, c.cui_doc_tabs_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(tabs_arg.len), @ptrCast(selected), &opts_c));
 }
 
 pub fn dockspace(self: *Ui, id: []const u8, opts: DockspaceOpts) void {
     const opts_c = self.cvtOpts(c.cui_dockspace_opts, opts);
-    self.pushEnd(c.cui_dockspace_end);
+    self.pushEnd(zui_end_adapter_dockspace_end);
 c.cui_dockspace_begin_ex(self.h, self.tmpStr(id).ptr, &opts_c);
 }
 
 pub fn dock_panel(self: *Ui, title: []const u8, open: *bool, opts: DockPanelOpts) bool {
     const opts_c = self.cvtOpts(c.cui_dock_panel_opts, opts);
     if (!(c.cui_dock_panel_begin_ex(self.h, self.tmpStr(title).ptr, open, &opts_c))) return false;
-    self.pushEnd(c.cui_dock_panel_end);
+    self.pushEnd(zui_end_adapter_dock_panel_end);
     return true;
 }
 
@@ -5767,7 +6331,7 @@ pub fn dock_panel(self: *Ui, title: []const u8, open: *bool, opts: DockPanelOpts
 /// its next frame); names it does not know yet are kept for when they appear.
 /// Malformed text returns false and changes nothing.
 pub fn dock_save(self: *Ui, id: []const u8, buf: []u8, cap: usize) usize {
-    return c.cui_dock_save(self.h, self.tmpStr(id).ptr, buf.ptr, buf.len, cap);
+    return c.cui_dock_save(self.h, self.tmpStr(id).ptr, buf.ptr, cap);
 }
 
 pub fn dock_load(self: *Ui, id: []const u8, s: []const u8) bool {
@@ -5777,7 +6341,7 @@ pub fn dock_load(self: *Ui, id: []const u8, s: []const u8) bool {
 pub fn inspector(self: *Ui, id: []const u8, opts: InspectorOpts) bool {
     const opts_c = self.cvtOpts(c.cui_inspector_opts, opts);
     if (!(c.cui_inspector_begin_ex(self.h, self.tmpStr(id).ptr, &opts_c))) return false;
-    self.pushEnd(c.cui_inspector_end);
+    self.pushEnd(zui_end_adapter_inspector_end);
     return true;
 }
 
@@ -5800,7 +6364,7 @@ pub fn prop_int(self: *Ui, label: []const u8, value: *i32, opts: PropOpts) bool 
 
 pub fn prop_text(self: *Ui, label: []const u8, buf: []u8, cap: usize, opts: PropOpts) bool {
     const opts_c = self.cvtOpts(c.cui_prop_opts, opts);
-    return c.cui_prop_text_ex(self.h, self.tmpStr(label).ptr, buf.ptr, buf.len, cap, &opts_c);
+    return c.cui_prop_text_ex(self.h, self.tmpStr(label).ptr, buf.ptr, cap, &opts_c);
 }
 
 pub fn prop_bool(self: *Ui, label: []const u8, value: *bool, opts: PropOpts) bool {
@@ -5809,9 +6373,18 @@ pub fn prop_bool(self: *Ui, label: []const u8, value: *bool, opts: PropOpts) boo
 }
 
 pub fn prop_enum(self: *Ui, label: []const u8, items: []const []const u8, index: *i32, opts: PropOpts) bool {
-    const items_c = self.strArr(items);
+    const zp2_c = self.strArr(items);
     const opts_c = self.cvtOpts(c.cui_prop_opts, opts);
-    return c.cui_prop_enum_ex(self.h, self.tmpStr(label).ptr, items_c, @intCast(items.len), @ptrCast(index), &opts_c);
+    return c.cui_prop_enum_ex(self.h, self.tmpStr(label).ptr, zp2_c, @intCast(items.len), @ptrCast(index), &opts_c);
+}
+
+/// A swatch and hex value that opens the color picker.
+pub fn prop_color(self: *Ui, label: []const u8, value: *Color, opts: PropOpts) bool {
+    var zp2_c: c.cui_color = colorToC(value.*);
+    const opts_c = self.cvtOpts(c.cui_prop_opts, opts);
+    const result = c.cui_prop_color_ex(self.h, self.tmpStr(label).ptr, &zp2_c, &opts_c);
+    value.* = colorFromC(zp2_c);
+    return result;
 }
 
 /// Compact X, Y (Z, W) scrub fields side by side; value holds 2, 3 or 4 floats.
@@ -5849,20 +6422,20 @@ pub fn emoji_font_load_file(self: *Ui, path: []const u8) bool {
 }
 
 pub fn emoji_font_load_memory(self: *Ui, data: []const u8, copy: bool) bool {
-    return c.cui_emoji_font_load_memory(self.h, data.ptr, data.len, copy);
+    return c.cui_emoji_font_load_memory(self.h, data.ptr, @intCast(data.len), copy);
 }
 
 pub fn emoji_font_load_system(self: *Ui) bool {
     return c.cui_emoji_font_load_system(self.h);
 }
 
-pub fn emoji_supported(self: *Ui, utf8: []const u8, len: i32) bool {
-    return c.cui_emoji_supported(self.h, self.tmpStr(utf8).ptr, len);
+pub fn emoji_supported(self: *Ui, utf8: []const u8) bool {
+    return c.cui_emoji_supported(self.h, utf8.ptr, @intCast(utf8.len));
 }
 
-pub fn draw_emoji(self: *Ui, utf8: []const u8, len: i32, r: Rect) void {
-    const r_c = rectToC(r);
-    c.cui_draw_emoji(self.h, self.tmpStr(utf8).ptr, len, &r_c);
+pub fn draw_emoji(self: *Ui, utf8: []const u8, r: Rect) void {
+    const zp2_c = rectToC(r);
+    c.cui_draw_emoji(self.h, utf8.ptr, @intCast(utf8.len), zp2_c);
 }
 
 pub fn emoji(self: *Ui, utf8: []const u8, size_arg: f32) void {
@@ -5874,6 +6447,12 @@ pub fn emoji_picker(self: *Ui, id: []const u8, opts: EmojiPickerOpts) []const u8
     return spanOrEmpty(c.cui_emoji_picker_ex(self.h, self.tmpStr(id).ptr, &opts_c));
 }
 
+/// sel may be NULL: the view then keeps the selection itself.
+pub fn hex_view(self: *Ui, id: []const u8, data: []const u8, sel: *c.cui_hex_selection, opts: HexViewOpts) HexResult {
+    const opts_c = self.cvtOpts(c.cui_hex_view_opts, opts);
+    return cvtBackStruct(HexResult, c.cui_hex_view_ex(self.h, self.tmpStr(id).ptr, data.ptr, @intCast(data.len), @ptrCast(sel), &opts_c));
+}
+
 /// Go to offset: on the view's next frame its cursor moves to offset, that byte
 /// becomes the selection and it scrolls into view (to the middle when it was
 /// out of sight). Wire a "Go to" field to it; it is safe to call every frame.
@@ -5883,16 +6462,9 @@ pub fn hex_view_goto(self: *Ui, id: []const u8, offset: usize) void {
 
 /// selected: index into spans, -1 for none (may be NULL).
 pub fn flame_graph(self: *Ui, id: []const u8, spans: []const FlameSpan, view: *c.cui_flame_view, selected: *i32, opts: FlameOpts) FlameResult {
-    const spans_c = self.structArr(c.cui_flame_span, spans);
+    const zp2_c = self.structArr(c.cui_flame_span, spans);
     const opts_c = self.cvtOpts(c.cui_flame_opts, opts);
-    return cvtBackStruct(FlameResult, c.cui_flame_graph_ex(self.h, self.tmpStr(id).ptr, spans_c, @intCast(spans.len), @ptrCast(view), @ptrCast(selected), &opts_c));
-}
-
-/// Where a span was drawn in the latest frame, in points (zero size when out
-/// of view). flame is the graph's id: cui_last_id(ui) right after the call.
-pub fn flame_span_rect(self: *Ui, flame: u32, span: FlameSpan) Rect {
-    const span_c = self.cvtOpts(c.cui_flame_span, span);
-    return rectFromC(c.cui_flame_span_rect(self.h, flame, &span_c));
+    return cvtBackStruct(FlameResult, c.cui_flame_graph_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(spans.len), @ptrCast(view), @ptrCast(selected), &opts_c));
 }
 
 pub fn curve_editor(self: *Ui, id: []const u8, keys: *c.cui_curve_key, count: *i32, capacity: i32, opts: CurveOpts) CurveResult {
@@ -5925,26 +6497,31 @@ pub fn step_slider(self: *Ui, label: []const u8, value: *i32, min: i32, max: i32
     return c.cui_step_slider_ex(self.h, self.tmpStr(label).ptr, @ptrCast(value), min, max, &opts_c);
 }
 
+pub fn palette_strip(self: *Ui, label: []const u8, colors: []Color, locked: *bool, opts: PaletteStripOpts) i32 {
+    const opts_c = self.cvtOpts(c.cui_palette_strip_opts, opts);
+    return c.cui_palette_strip_ex(self.h, self.tmpStr(label).ptr, @ptrCast(colors.ptr), locked, @intCast(colors.len), &opts_c);
+}
+
 pub fn aspect_picker(self: *Ui, label: []const u8, index: *i32, opts: AspectPickerOpts) bool {
     const opts_c = self.cvtOpts(c.cui_aspect_picker_opts, opts);
     return c.cui_aspect_picker_ex(self.h, self.tmpStr(label).ptr, @ptrCast(index), &opts_c);
 }
 
 pub fn option_action(self: *Ui, label: []const u8, items: []const []const u8, index: *i32, icon_name: []const u8, opts: OptionActionOpts) i32 {
-    const items_c = self.strArr(items);
+    const zp2_c = self.strArr(items);
     const opts_c = self.cvtOpts(c.cui_option_action_opts, opts);
-    return c.cui_option_action_ex(self.h, self.tmpStr(label).ptr, items_c, @intCast(items.len), @ptrCast(index), self.tmpStr(icon_name).ptr, &opts_c);
+    return c.cui_option_action_ex(self.h, self.tmpStr(label).ptr, zp2_c, @intCast(items.len), @ptrCast(index), self.tmpStr(icon_name).ptr, &opts_c);
 }
 
-pub fn seed_field(self: *Ui, label: []const u8, locked: *bool, opts: SeedFieldOpts) i32 {
+pub fn seed_field(self: *Ui, label: []const u8, seed: *u32, locked: *bool, opts: SeedFieldOpts) i32 {
     const opts_c = self.cvtOpts(c.cui_seed_field_opts, opts);
-    return c.cui_seed_field_ex(self.h, self.tmpStr(label).ptr, locked, &opts_c);
+    return c.cui_seed_field_ex(self.h, self.tmpStr(label).ptr, @ptrCast(seed), locked, &opts_c);
 }
 
 /// time: the playhead in seconds (may be NULL).
-pub fn timeline_editor(self: *Ui, id: []const u8, tracks: *c.cui_timeline_track, count: i32, time: *f32, opts: TimelineEditorOpts) TimelineEditorResult {
+pub fn timeline_editor(self: *Ui, id: []const u8, tracks: []c.cui_timeline_track, time: *f32, opts: TimelineEditorOpts) TimelineEditorResult {
     const opts_c = self.cvtOpts(c.cui_timeline_editor_opts, opts);
-    return cvtBackStruct(TimelineEditorResult, c.cui_timeline_editor_ex(self.h, self.tmpStr(id).ptr, @ptrCast(tracks), count, @ptrCast(time), &opts_c));
+    return cvtBackStruct(TimelineEditorResult, c.cui_timeline_editor_ex(self.h, self.tmpStr(id).ptr, @ptrCast(tracks.ptr), @intCast(tracks.len), @ptrCast(time), &opts_c));
 }
 
 pub fn kv_editor(self: *Ui, id: []const u8, pairs: *c.cui_kv_pair, count: *i32, capacity: i32, opts: KvEditorOpts) bool {
@@ -5953,28 +6530,28 @@ pub fn kv_editor(self: *Ui, id: []const u8, pairs: *c.cui_kv_pair, count: *i32, 
 }
 
 pub fn problems(self: *Ui, id: []const u8, diags: []const Diagnostic, opts: ProblemsOpts) ProblemsResult {
-    const diags_c = self.structArr(c.cui_diagnostic, diags);
+    const zp2_c = self.structArr(c.cui_diagnostic, diags);
     const opts_c = self.cvtOpts(c.cui_problems_opts, opts);
-    return cvtBackStruct(ProblemsResult, c.cui_problems_ex(self.h, self.tmpStr(id).ptr, diags_c, @intCast(diags.len), &opts_c));
+    return cvtBackStruct(ProblemsResult, c.cui_problems_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(diags.len), &opts_c));
 }
 
 pub fn pipeline(self: *Ui, id: []const u8, stages: []const []const u8, jobs: []const PipelineJob, opts: PipelineOpts) PipelineResult {
-    const stages_c = self.strArr(stages);
-    const jobs_c = self.structArr(c.cui_pipeline_job, jobs);
+    const zp2_c = self.strArr(stages);
+    const zp4_c = self.structArr(c.cui_pipeline_job, jobs);
     const opts_c = self.cvtOpts(c.cui_pipeline_opts, opts);
-    return cvtBackStruct(PipelineResult, c.cui_pipeline_ex(self.h, self.tmpStr(id).ptr, stages_c, @intCast(stages.len), jobs_c, @intCast(jobs.len), &opts_c));
+    return cvtBackStruct(PipelineResult, c.cui_pipeline_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(stages.len), zp4_c, @intCast(jobs.len), &opts_c));
 }
 
 /// Read-only and disabled builders preserve the input rules and count.
 pub fn query_builder(self: *Ui, id: []const u8, fields: []const QueryField, nodes: *c.cui_query_node, count: *i32, capacity: i32, opts: QueryOpts) bool {
-    const fields_c = self.structArr(c.cui_query_field, fields);
+    const zp2_c = self.structArr(c.cui_query_field, fields);
     const opts_c = self.cvtOpts(c.cui_query_opts, opts);
-    return c.cui_query_builder_ex(self.h, self.tmpStr(id).ptr, fields_c, @intCast(fields.len), @ptrCast(nodes), @ptrCast(count), capacity, &opts_c);
+    return c.cui_query_builder_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(fields.len), @ptrCast(nodes), @ptrCast(count), capacity, &opts_c);
 }
 
 pub fn schedule_picker(self: *Ui, id: []const u8, cron: []u8, cap: usize, opts: ScheduleOpts) ScheduleResult {
     const opts_c = self.cvtOpts(c.cui_schedule_opts, opts);
-    return cvtBackStruct(ScheduleResult, c.cui_schedule_picker_ex(self.h, self.tmpStr(id).ptr, cron.ptr, cron.len, cap, &opts_c));
+    return cvtBackStruct(ScheduleResult, c.cui_schedule_picker_ex(self.h, self.tmpStr(id).ptr, cron.ptr, cap, &opts_c));
 }
 
 /// "Every weekday at 09:30", in frame memory; NULL when invalid.
@@ -5983,69 +6560,56 @@ pub fn cron_describe(self: *Ui, cron: []const u8) []const u8 {
 }
 
 pub fn keymap(self: *Ui, id: []const u8, bindings: []const KeymapBinding, opts: KeymapOpts) KeymapResult {
-    const bindings_c = self.structArr(c.cui_keymap_binding, bindings);
+    const zp2_c = self.structArr(c.cui_keymap_binding, bindings);
     const opts_c = self.cvtOpts(c.cui_keymap_opts, opts);
-    return cvtBackStruct(KeymapResult, c.cui_keymap_ex(self.h, self.tmpStr(id).ptr, bindings_c, @intCast(bindings.len), &opts_c));
+    return cvtBackStruct(KeymapResult, c.cui_keymap_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(bindings.len), &opts_c));
 }
 
 pub fn commit_graph(self: *Ui, id: []const u8, commits: []const Commit, opts: CommitGraphOpts) CommitGraphResult {
-    const commits_c = self.structArr(c.cui_commit, commits);
+    const zp2_c = self.structArr(c.cui_commit, commits);
     const opts_c = self.cvtOpts(c.cui_commit_graph_opts, opts);
-    return cvtBackStruct(CommitGraphResult, c.cui_commit_graph_ex(self.h, self.tmpStr(id).ptr, commits_c, @intCast(commits.len), &opts_c));
+    return cvtBackStruct(CommitGraphResult, c.cui_commit_graph_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(commits.len), &opts_c));
 }
 
 pub fn graph_view(self: *Ui, id: []const u8, nodes: []const GraphNode, edges: []const GraphEdge, opts: GraphOpts) GraphResult {
-    const nodes_c = self.structArr(c.cui_graph_node, nodes);
-    const edges_c = self.structArr(c.cui_graph_edge, edges);
+    const zp2_c = self.structArr(c.cui_graph_node, nodes);
+    const zp4_c = self.structArr(c.cui_graph_edge, edges);
     const opts_c = self.cvtOpts(c.cui_graph_opts, opts);
-    return cvtBackStruct(GraphResult, c.cui_graph_view_ex(self.h, self.tmpStr(id).ptr, nodes_c, @intCast(nodes.len), edges_c, @intCast(edges.len), &opts_c));
+    return cvtBackStruct(GraphResult, c.cui_graph_view_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(nodes.len), zp4_c, @intCast(edges.len), &opts_c));
 }
 
 pub fn waterfall(self: *Ui, id: []const u8, requests: []const NetRequest, opts: WaterfallOpts) WaterfallResult {
-    const requests_c = self.structArr(c.cui_net_request, requests);
+    const zp2_c = self.structArr(c.cui_net_request, requests);
     const opts_c = self.cvtOpts(c.cui_waterfall_opts, opts);
-    return cvtBackStruct(WaterfallResult, c.cui_waterfall_ex(self.h, self.tmpStr(id).ptr, requests_c, @intCast(requests.len), &opts_c));
+    return cvtBackStruct(WaterfallResult, c.cui_waterfall_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(requests.len), &opts_c));
 }
 
 pub fn trace_view(self: *Ui, id: []const u8, tracks: *c.cui_trace_track, track_count: i32, spans: []const TraceSpan, view: *c.cui_trace_view, selected: *i32, opts: TraceOpts) TraceResult {
-    const spans_c = self.structArr(c.cui_trace_span, spans);
+    const zp4_c = self.structArr(c.cui_trace_span, spans);
     const opts_c = self.cvtOpts(c.cui_trace_opts, opts);
-    return cvtBackStruct(TraceResult, c.cui_trace_view_ex(self.h, self.tmpStr(id).ptr, @ptrCast(tracks), track_count, spans_c, @intCast(spans.len), @ptrCast(view), @ptrCast(selected), &opts_c));
-}
-
-/// Where a span is drawn, in points (zero size when out of view or in a folded
-/// lane below its top row): its time extent and row, as cui_flame_span_rect
-/// gives one; the bar inside is a point narrower, the gap between neighbours,
-/// and a selected sliver is widened to 3 points. trace is the view's id:
-/// cui_last_id(ui) right after the call. Asked right after the call, it
-/// answers at this frame's view in the rectangle of the previous frame, as
-/// this frame is not laid out yet; after cui_end_frame, where this frame drew
-/// it, until the next frame begins.
-pub fn trace_span_rect(self: *Ui, trace: u32, span: TraceSpan) Rect {
-    const span_c = self.cvtOpts(c.cui_trace_span, span);
-    return rectFromC(c.cui_trace_span_rect(self.h, trace, &span_c));
+    return cvtBackStruct(TraceResult, c.cui_trace_view_ex(self.h, self.tmpStr(id).ptr, @ptrCast(tracks), track_count, zp4_c, @intCast(spans.len), @ptrCast(view), @ptrCast(selected), &opts_c));
 }
 
 pub fn regex_tester(self: *Ui, id: []const u8, pattern: []u8, pattern_cap: usize, s: []u8, text_cap: usize, opts: RegexTesterOpts) RegexTesterResult {
     const opts_c = self.cvtOpts(c.cui_regex_tester_opts, opts);
-    return cvtBackStruct(RegexTesterResult, c.cui_regex_tester_ex(self.h, self.tmpStr(id).ptr, pattern.ptr, pattern.len, pattern_cap, s.ptr, s.len, text_cap, &opts_c));
+    return cvtBackStruct(RegexTesterResult, c.cui_regex_tester_ex(self.h, self.tmpStr(id).ptr, pattern.ptr, pattern_cap, s.ptr, text_cap, &opts_c));
 }
 
 pub fn test_explorer(self: *Ui, id: []const u8, items: []const TestItem, opts: TestExplorerOpts) TestExplorerResult {
-    const items_c = self.structArr(c.cui_test_item, items);
+    const zp2_c = self.structArr(c.cui_test_item, items);
     const opts_c = self.cvtOpts(c.cui_test_explorer_opts, opts);
-    return cvtBackStruct(TestExplorerResult, c.cui_test_explorer_ex(self.h, self.tmpStr(id).ptr, items_c, @intCast(items.len), &opts_c));
+    return cvtBackStruct(TestExplorerResult, c.cui_test_explorer_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(items.len), &opts_c));
 }
 
 pub fn stack_trace(self: *Ui, id: []const u8, frames: []const StackFrame, opts: StackTraceOpts) StackTraceResult {
-    const frames_c = self.structArr(c.cui_stack_frame, frames);
+    const zp2_c = self.structArr(c.cui_stack_frame, frames);
     const opts_c = self.cvtOpts(c.cui_stack_trace_opts, opts);
-    return cvtBackStruct(StackTraceResult, c.cui_stack_trace_ex(self.h, self.tmpStr(id).ptr, frames_c, @intCast(frames.len), &opts_c));
+    return cvtBackStruct(StackTraceResult, c.cui_stack_trace_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(frames.len), &opts_c));
 }
 
 pub fn request_bar(self: *Ui, id: []const u8, method: *i32, url: []u8, cap: usize, opts: RequestBarOpts) RequestBarResult {
     const opts_c = self.cvtOpts(c.cui_request_bar_opts, opts);
-    return cvtBackStruct(RequestBarResult, c.cui_request_bar_ex(self.h, self.tmpStr(id).ptr, @ptrCast(method), url.ptr, url.len, cap, &opts_c));
+    return cvtBackStruct(RequestBarResult, c.cui_request_bar_ex(self.h, self.tmpStr(id).ptr, @ptrCast(method), url.ptr, cap, &opts_c));
 }
 
 pub fn response_status(self: *Ui, status: i32, seconds: f64, bytes: f64) void {
@@ -6053,46 +6617,47 @@ pub fn response_status(self: *Ui, status: i32, seconds: f64, bytes: f64) void {
 }
 
 pub fn uptime(self: *Ui, id: []const u8, services: []const UptimeService, opts: UptimeOpts) UptimeResult {
-    const services_c = self.structArr(c.cui_uptime_service, services);
+    const zp2_c = self.structArr(c.cui_uptime_service, services);
     const opts_c = self.cvtOpts(c.cui_uptime_opts, opts);
-    return cvtBackStruct(UptimeResult, c.cui_uptime_ex(self.h, self.tmpStr(id).ptr, services_c, @intCast(services.len), &opts_c));
+    return cvtBackStruct(UptimeResult, c.cui_uptime_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(services.len), &opts_c));
 }
 
-pub fn time_histogram(self: *Ui, id: []const u8, start: f64, bucket_seconds: f64, buckets: i32, series: []const HistogramSeries, sel_start: *f64, sel_end: *f64, opts: TimeHistogramOpts) TimeHistogramResult {
-    const series_c = self.structArr(c.cui_histogram_series, series);
+pub fn time_histogram(self: *Ui, id: []const u8, start: f64, bucket_seconds: f64, buckets: i32, series: []const c.cui_histogram_series, sel_start: *f64, sel_end: *f64, opts: TimeHistogramOpts) TimeHistogramResult {
     const opts_c = self.cvtOpts(c.cui_time_histogram_opts, opts);
-    return cvtBackStruct(TimeHistogramResult, c.cui_time_histogram_ex(self.h, self.tmpStr(id).ptr, start, bucket_seconds, buckets, series_c, @intCast(series.len), @ptrCast(sel_start), @ptrCast(sel_end), &opts_c));
+    return cvtBackStruct(TimeHistogramResult, c.cui_time_histogram_ex(self.h, self.tmpStr(id).ptr, start, bucket_seconds, buckets, @ptrCast(series.ptr), @intCast(series.len), @ptrCast(sel_start), @ptrCast(sel_end), &opts_c));
 }
 
 pub fn coverage(self: *Ui, id: []const u8, files: []const CoverageFile, opts: CoverageOpts) CoverageResult {
-    const files_c = self.structArr(c.cui_coverage_file, files);
+    const zp2_c = self.structArr(c.cui_coverage_file, files);
     const opts_c = self.cvtOpts(c.cui_coverage_opts, opts);
-    return cvtBackStruct(CoverageResult, c.cui_coverage_ex(self.h, self.tmpStr(id).ptr, files_c, @intCast(files.len), &opts_c));
+    return cvtBackStruct(CoverageResult, c.cui_coverage_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(files.len), &opts_c));
 }
 
 pub fn blame(self: *Ui, id: []const u8, lines: []const []const u8, line_commit: []const i32, line_count: i32, commits: []const BlameCommit, opts: BlameOpts) BlameResult {
-    const lines_c = self.strArr(lines);
-    const commits_c = self.structArr(c.cui_blame_commit, commits);
+    const zp2_c = std.heap.page_allocator.alloc([*c]const u8, lines.len + 1) catch @panic("zui: oom");
+    defer std.heap.page_allocator.free(zp2_c);
+    for (lines, 0..) |it, ii| zp2_c[ii] = @ptrCast(self.tmpStr(it).ptr);
+    zp2_c[lines.len] = null;
+    const zp5_c = self.structArr(c.cui_blame_commit, commits);
     const opts_c = self.cvtOpts(c.cui_blame_opts, opts);
-    return cvtBackStruct(BlameResult, c.cui_blame_ex(self.h, self.tmpStr(id).ptr, lines_c, @intCast(lines.len), line_commit.ptr, @intCast(line_commit.len), line_count, commits_c, @intCast(commits.len), &opts_c));
+    return cvtBackStruct(BlameResult, c.cui_blame_ex(self.h, self.tmpStr(id).ptr, zp2_c.ptr, line_commit.ptr, line_count, zp5_c, @intCast(commits.len), &opts_c));
 }
 
-pub fn feature_flags(self: *Ui, id: []const u8, flags: *c.cui_feature_flag, count: i32, envs: []const []const u8, opts: FeatureFlagsOpts) FeatureFlagsResult {
-    const envs_c = self.strArr(envs);
+pub fn feature_flags(self: *Ui, id: []const u8, flags: []c.cui_feature_flag, envs: []const []const u8, opts: FeatureFlagsOpts) FeatureFlagsResult {
+    const zp4_c = self.strArr(envs);
     const opts_c = self.cvtOpts(c.cui_feature_flags_opts, opts);
-    return cvtBackStruct(FeatureFlagsResult, c.cui_feature_flags_ex(self.h, self.tmpStr(id).ptr, @ptrCast(flags), count, envs_c, @intCast(envs.len), &opts_c));
+    return cvtBackStruct(FeatureFlagsResult, c.cui_feature_flags_ex(self.h, self.tmpStr(id).ptr, @ptrCast(flags.ptr), @intCast(flags.len), zp4_c, @intCast(envs.len), &opts_c));
 }
 
 pub fn api_explorer(self: *Ui, id: []const u8, endpoints: []const ApiEndpoint, opts: ApiExplorerOpts) ApiExplorerResult {
-    const endpoints_c = self.structArr(c.cui_api_endpoint, endpoints);
+    const zp2_c = self.structArr(c.cui_api_endpoint, endpoints);
     const opts_c = self.cvtOpts(c.cui_api_explorer_opts, opts);
-    return cvtBackStruct(ApiExplorerResult, c.cui_api_explorer_ex(self.h, self.tmpStr(id).ptr, endpoints_c, @intCast(endpoints.len), &opts_c));
+    return cvtBackStruct(ApiExplorerResult, c.cui_api_explorer_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(endpoints.len), &opts_c));
 }
 
-pub fn dot_chart(self: *Ui, id: []const u8, series: []const DotSeries, count: i32, opts: DotChartOpts) DotChartResult {
-    const series_c = self.structArr(c.cui_dot_series, series);
+pub fn dot_chart(self: *Ui, id: []const u8, series: []const c.cui_dot_series, count: i32, opts: DotChartOpts) DotChartResult {
     const opts_c = self.cvtOpts(c.cui_dot_chart_opts, opts);
-    return cvtBackStruct(DotChartResult, c.cui_dot_chart_ex(self.h, self.tmpStr(id).ptr, series_c, @intCast(series.len), count, &opts_c));
+    return cvtBackStruct(DotChartResult, c.cui_dot_chart_ex(self.h, self.tmpStr(id).ptr, @ptrCast(series.ptr), @intCast(series.len), count, &opts_c));
 }
 
 pub fn event_track(self: *Ui, id: []const u8, times: *f64, count: *i32, capacity: i32, min: f64, max: f64, opts: EventTrackOpts) EventTrackResult {
@@ -6117,15 +6682,15 @@ pub fn format_bar(self: *Ui, id: []const u8, format: *c.cui_text_format, opts: F
 }
 
 pub fn live_cursors(self: *Ui, id: []const u8, users: []const LiveUser, opts: LiveCursorsOpts) void {
-    const users_c = self.structArr(c.cui_live_user, users);
+    const zp2_c = self.structArr(c.cui_live_user, users);
     const opts_c = self.cvtOpts(c.cui_live_cursors_opts, opts);
-    c.cui_live_cursors_ex(self.h, self.tmpStr(id).ptr, users_c, @intCast(users.len), &opts_c);
+    c.cui_live_cursors_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(users.len), &opts_c);
 }
 
 pub fn presence_pill(self: *Ui, id: []const u8, users: []const LiveUser, opts: PresencePillOpts) void {
-    const users_c = self.structArr(c.cui_live_user, users);
+    const zp2_c = self.structArr(c.cui_live_user, users);
     const opts_c = self.cvtOpts(c.cui_presence_pill_opts, opts);
-    c.cui_presence_pill_ex(self.h, self.tmpStr(id).ptr, users_c, @intCast(users.len), &opts_c);
+    c.cui_presence_pill_ex(self.h, self.tmpStr(id).ptr, zp2_c, @intCast(users.len), &opts_c);
 }
 
 pub fn selection_ring(self: *Ui, color: Color, opts: SelectionRingOpts) void {
@@ -6147,84 +6712,84 @@ pub fn result_card(self: *Ui, id: []const u8, image: usize, title: []const u8, o
 /// Returns the action picked, CUI_SELECTION_CLEARED when the clear button or Esc
 /// cleared the selection, or CUI_SELECTION_NONE.
 pub fn selection_bar(self: *Ui, id: []const u8, count: i32, actions: []const SelectionAction, opts: SelectionBarOpts) i32 {
-    const actions_c = self.structArr(c.cui_selection_action, actions);
+    const zp3_c = self.structArr(c.cui_selection_action, actions);
     const opts_c = self.cvtOpts(c.cui_selection_bar_opts, opts);
-    return c.cui_selection_bar_ex(self.h, self.tmpStr(id).ptr, count, actions_c, @intCast(actions.len), &opts_c);
+    return c.cui_selection_bar_ex(self.h, self.tmpStr(id).ptr, count, zp3_c, @intCast(actions.len), &opts_c);
 }
 
 pub fn draw_rect(self: *Ui, r: Rect, radius: Corners, fill: Color) void {
-    const r_c = rectToC(r);
-    const radius_c = self.cvtOpts(c.cui_corners, radius);
-    c.cui_draw_rect(self.h, &r_c, &radius_c, colorToC(fill));
+    const zp1_c = rectToC(r);
+    const zp2_c = cvtFree(c.cui_corners, radius);
+    c.cui_draw_rect(self.h, zp1_c, zp2_c, colorToC(fill));
 }
 
 pub fn draw_rect_border(self: *Ui, r: Rect, radius: Corners, fill: Color, border: Color, border_width: f32) void {
-    const r_c = rectToC(r);
-    const radius_c = self.cvtOpts(c.cui_corners, radius);
-    c.cui_draw_rect_border(self.h, &r_c, &radius_c, colorToC(fill), colorToC(border), border_width);
+    const zp1_c = rectToC(r);
+    const zp2_c = cvtFree(c.cui_corners, radius);
+    c.cui_draw_rect_border(self.h, zp1_c, zp2_c, colorToC(fill), colorToC(border), border_width);
 }
 
 pub fn draw_rect_gradient(self: *Ui, r: Rect, radius: Corners, top: Color, bottom: Color) void {
-    const r_c = rectToC(r);
-    const radius_c = self.cvtOpts(c.cui_corners, radius);
-    c.cui_draw_rect_gradient(self.h, &r_c, &radius_c, colorToC(top), colorToC(bottom));
+    const zp1_c = rectToC(r);
+    const zp2_c = cvtFree(c.cui_corners, radius);
+    c.cui_draw_rect_gradient(self.h, zp1_c, zp2_c, colorToC(top), colorToC(bottom));
 }
 
 pub fn draw_shadow(self: *Ui, r: Rect, radius: Corners, blur: f32, spread: f32, offset: Vec2, color: Color) void {
-    const r_c = rectToC(r);
-    const radius_c = self.cvtOpts(c.cui_corners, radius);
-    const offset_c = vecToC(offset);
-    c.cui_draw_shadow(self.h, &r_c, &radius_c, blur, spread, &offset_c, colorToC(color));
+    const zp1_c = rectToC(r);
+    const zp2_c = cvtFree(c.cui_corners, radius);
+    const zp5_c = vecToC(offset);
+    c.cui_draw_shadow(self.h, zp1_c, zp2_c, blur, spread, zp5_c, colorToC(color));
 }
 
 pub fn draw_line(self: *Ui, a: Vec2, b: Vec2, thickness: f32, color: Color) void {
-    const a_c = vecToC(a);
-    const b_c = vecToC(b);
-    c.cui_draw_line(self.h, &a_c, &b_c, thickness, colorToC(color));
+    const zp1_c = vecToC(a);
+    const zp2_c = vecToC(b);
+    c.cui_draw_line(self.h, zp1_c, zp2_c, thickness, colorToC(color));
 }
 
 pub fn draw_polyline(self: *Ui, points: []const Vec2, thickness: f32, color: Color, closed: bool) void {
-    const points_c = self.arena.allocator().alloc(c.cui_vec2, points.len) catch @panic("zui: oom");
-    for (points, 0..) |pt, pi| points_c[pi] = vecToC(pt);
-    c.cui_draw_polyline(self.h, points_c.ptr, @intCast(points.len), thickness, colorToC(color), closed);
+    const zp1_c = self.arena.allocator().alloc(c.cui_vec2, points.len) catch @panic("zui: oom");
+    for (points, 0..) |pt, vpi| zp1_c[vpi] = vecToC(pt);
+    c.cui_draw_polyline(self.h, zp1_c.ptr, @intCast(points.len), thickness, colorToC(color), closed);
 }
 
 pub fn draw_polygon(self: *Ui, points: []const Vec2, color: Color) void {
-    const points_c = self.arena.allocator().alloc(c.cui_vec2, points.len) catch @panic("zui: oom");
-    for (points, 0..) |pt, pi| points_c[pi] = vecToC(pt);
-    c.cui_draw_polygon(self.h, points_c.ptr, @intCast(points.len), colorToC(color));
+    const zp1_c = self.arena.allocator().alloc(c.cui_vec2, points.len) catch @panic("zui: oom");
+    for (points, 0..) |pt, vpi| zp1_c[vpi] = vecToC(pt);
+    c.cui_draw_polygon(self.h, zp1_c.ptr, @intCast(points.len), colorToC(color));
 }
 
 pub fn draw_circle(self: *Ui, center: Vec2, radius: f32, color: Color) void {
-    const center_c = vecToC(center);
-    c.cui_draw_circle(self.h, &center_c, radius, colorToC(color));
+    const zp1_c = vecToC(center);
+    c.cui_draw_circle(self.h, zp1_c, radius, colorToC(color));
 }
 
 pub fn draw_arc(self: *Ui, center: Vec2, radius: f32, a0: f32, a1: f32, thickness: f32, color: Color) void {
-    const center_c = vecToC(center);
-    c.cui_draw_arc(self.h, &center_c, radius, a0, a1, thickness, colorToC(color));
+    const zp1_c = vecToC(center);
+    c.cui_draw_arc(self.h, zp1_c, radius, a0, a1, thickness, colorToC(color));
 }
 
-pub fn draw_text(self: *Ui, font: i32, size_arg: f32, pos: Vec2, color: Color, s: []const u8, len: i32) void {
-    const pos_c = vecToC(pos);
-    c.cui_draw_text(self.h, font, size_arg, &pos_c, colorToC(color), self.tmpStr(s).ptr, len);
+pub fn draw_text(self: *Ui, font: i32, size_arg: f32, pos: Vec2, color: Color, s: []const u8) void {
+    const zp3_c = vecToC(pos);
+    c.cui_draw_text(self.h, font, size_arg, zp3_c, colorToC(color), s.ptr, @intCast(s.len));
 }
 
 pub fn draw_icon(self: *Ui, icon_name: []const u8, r: Rect, size_arg: f32, color: Color) void {
-    const r_c = rectToC(r);
-    c.cui_draw_icon(self.h, self.tmpStr(icon_name).ptr, &r_c, size_arg, colorToC(color));
+    const zp2_c = rectToC(r);
+    c.cui_draw_icon(self.h, self.tmpStr(icon_name).ptr, zp2_c, size_arg, colorToC(color));
 }
 
 pub fn draw_image(self: *Ui, tex: usize, r: Rect, uv: Rect, radius: Corners, tint: Color) void {
-    const r_c = rectToC(r);
-    const uv_c = rectToC(uv);
-    const radius_c = self.cvtOpts(c.cui_corners, radius);
-    c.cui_draw_image(self.h, tex, &r_c, &uv_c, &radius_c, colorToC(tint));
+    const zp2_c = rectToC(r);
+    const zp3_c = rectToC(uv);
+    const zp4_c = cvtFree(c.cui_corners, radius);
+    c.cui_draw_image(self.h, tex, zp2_c, zp3_c, zp4_c, colorToC(tint));
 }
 
 pub fn push_clip(self: *Ui, r: Rect) void {
-    const r_c = rectToC(r);
-    c.cui_push_clip(self.h, &r_c);
+    const zp1_c = rectToC(r);
+    c.cui_push_clip(self.h, zp1_c);
 }
 
 pub fn pop_clip(self: *Ui) void {
@@ -6240,8 +6805,8 @@ pub fn pop_clip(self: *Ui) void {
 /// the page there. Like every hit area, the region is the one painted on the
 /// previous frame.
 pub fn wheel_region(self: *Ui, id: u32, rect: Rect) void {
-    const rect_c = rectToC(rect);
-    c.cui_wheel_region(self.h, id, &rect_c);
+    const zp2_c = rectToC(rect);
+    c.cui_wheel_region(self.h, id, zp2_c);
 }
 
 /// Returns the wheel aimed at a cui_wheel_region id this frame, in lines with
@@ -6249,9 +6814,9 @@ pub fn wheel_region(self: *Ui, id: u32, rect: Rect) void {
 /// frame. Returns false and leaves *delta alone when no wheel came, and in a
 /// disabled scope: call it in the scope the canvas was built in.
 pub fn wheel_take(self: *Ui, id: u32, delta: *Vec2) bool {
-    var delta_c: c.cui_vec2 = std.mem.zeroes(c.cui_vec2);
-    const result = c.cui_wheel_take(self.h, id, &delta_c);
-    delta.* = .{ .x = delta_c.x, .y = delta_c.y };
+    var zp2_c: c.cui_vec2 = std.mem.zeroes(c.cui_vec2);
+    const result = c.cui_wheel_take(self.h, id, &zp2_c);
+    delta.* = .{ .x = zp2_c.x, .y = zp2_c.y };
     return result;
 }
 
@@ -6317,6 +6882,10 @@ pub fn animate_spring(self: *Ui, id: u32, target: f32, duration: f32, bounce: f3
                 dst.* = val.toC();
             } else if (From == ?Color) {
                 dst.* = if (val) |cc| cc.toC() else std.mem.zeroes(To);
+            } else if (From == Vec2) {
+                dst.* = vecToC(val);
+            } else if (From == Rect) {
+                dst.* = rectToC(val);
             } else if (@typeInfo(From) == .pointer and @typeInfo(From).pointer.size == .slice) {
                 // pointer+count field pair folded into one slice
                 const CF = @FieldType(C, f);
@@ -6395,6 +6964,36 @@ fn enumToInt(v: anytype) i32 {
     return if (@typeInfo(@TypeOf(v)) == .@"enum") @intFromEnum(v) else @intCast(v);
 }
 
+/// Converts a friendly struct that has no string/slice fields into its C
+/// counterpart (used by the free utility functions, which have no frame
+/// arena). Structs needing strings take C-typed parameters instead.
+fn cvtFree(comptime C: type, o: anytype) C {
+    var out: C = std.mem.zeroes(C);
+    const info = @typeInfo(@TypeOf(o)).@"struct";
+    inline for (0..info.field_names.len) |i| {
+        const f = info.field_names[i];
+        const val = @field(o, f);
+        const From = @TypeOf(val);
+        const To = @TypeOf(@field(out, f));
+        if (From == Size) {
+            @field(out, f) = val.toC();
+        } else if (From == Color or From == ?Color) {
+            @field(out, f) = colorToC(val);
+        } else if (From == Vec2) {
+            @field(out, f) = vecToC(val);
+        } else if (From == Rect) {
+            @field(out, f) = rectToC(val);
+        } else if (@typeInfo(From) == .@"enum") {
+            @field(out, f) = enumOrInt(To, val);
+        } else if (@typeInfo(From) == .@"struct") {
+            @field(out, f) = cvtFree(To, val);
+        } else {
+            @field(out, f) = val;
+        }
+    }
+    return out;
+}
+
 /// Converts a C struct returned by value into its friendly Zig mirror.
 fn cvtBackStruct(comptime Z: type, cv: anytype) Z {
     var out: Z = undefined;
@@ -6461,6 +7060,21 @@ pub const AppDesc = struct {
     follow_system_theme: bool = false,
     /// Linux only: the app's ID (WM_CLASS / Wayland app_id)
     app_id: ?[]const u8 = null,
+};
+
+/// C `cui_window_state`.
+pub const WindowState = enum(c_int) { normal = 0, maximized, minimized };
+
+/// C `cui_file_dialog_kind`.
+pub const FileDialogKind = enum(c_int) { open = 0, save, folder };
+
+/// C `cui_file_dialog_opts`.
+pub const FileDialogOpts = struct {
+    kind: FileDialogKind = .open,
+    title: ?[]const u8 = null,
+    filter_name: ?[]const u8 = null,
+    filter: ?[]const u8 = null,
+    default_name: ?[]const u8 = null,
 };
 
 pub const App = struct {
@@ -6550,6 +7164,33 @@ pub const App = struct {
 
     pub fn restore(self: *App) void {
         c.cui_app_restore(self.handle);
+    }
+
+    pub fn minimize(self: *App) void {
+        c.cui_app_minimize(self.handle);
+    }
+
+    /// Normal, maximized or minimized, as the system reports it now.
+    pub fn windowState(self: *App) WindowState {
+        return @enumFromInt(enumToInt(c.cui_app_window_state(self.handle)));
+    }
+
+    /// Native open/save dialog; blocking. On success writes the chosen path
+    /// (UTF-8) into `out` and returns true.
+    pub fn fileDialog(self: *App, opts: FileDialogOpts, out: []u8) bool {
+        var cd: c.cui_file_dialog_opts = std.mem.zeroes(c.cui_file_dialog_opts);
+        cd.kind = enumOrInt(@TypeOf(cd.kind), opts.kind);
+        if (opts.title) |s| cd.title = self.ui_state.tmpStr(s).ptr;
+        if (opts.filter_name) |s| cd.filter_name = self.ui_state.tmpStr(s).ptr;
+        if (opts.filter) |s| cd.filter = self.ui_state.tmpStr(s).ptr;
+        if (opts.default_name) |s| cd.default_name = self.ui_state.tmpStr(s).ptr;
+        return c.cui_app_file_dialog(self.handle, &cd, out.ptr, out.len);
+    }
+
+    /// Renders the current UI into an RGBA buffer (any backend), for
+    /// screenshots and tests.
+    pub fn screenshot(self: *App, rgba: []u8, width: i32, height: i32) bool {
+        return c.cui_app_screenshot(self.handle, rgba.ptr, width, height);
     }
 
     /// Active backend name: "cocoa", "win32", "x11", "sdl2" or "glfw".

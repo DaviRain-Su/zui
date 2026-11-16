@@ -200,3 +200,79 @@ test "unbalanced scopes are caught" {
     ui.end();
     try std.testing.expect(!ui.scoped());
 }
+
+// Forces semantic analysis of every generated method and free function, so
+// type errors anywhere in the generated surface fail the build.
+fn refFns(comptime T: type) void {
+    const info = @typeInfo(T).@"struct";
+    inline for (info.decl_names) |d| {
+        const D = @TypeOf(@field(T, d));
+        if (@typeInfo(D) == .@"fn") {
+            _ = &@field(T, d);
+        }
+    }
+}
+
+test "every declared function analyzes" {
+    refFns(zui);
+    refFns(zui.Ui);
+    refFns(zui.App);
+}
+
+test "canvas callback paints and reports interaction rect" {
+    var ui = try zui.Ui.createHeadless(200, 120, 1.0);
+    defer ui.destroy();
+
+    ui.beginFrame(1.0 / 60.0);
+    {
+        ui.column(.{ .pad = 8 });
+        defer ui.end();
+        _ = ui.canvas("cv", .{ .px = 100 }, .{ .px = 50 }, {}, struct {
+            fn paint(u: *zui.Ui, r: zui.Rect, _: void) void {
+                u.draw_rect(r, .{ .tl = 4, .tr = 4, .br = 4, .bl = 4 }, zui.Color.rgb(0xFF0000));
+            }
+        }.paint);
+    }
+    ui.endFrame();
+
+    const px = try std.testing.allocator.alloc(u8, 200 * 120 * 4);
+    defer std.testing.allocator.free(px);
+    @memset(px, 0);
+    try ui.render(px);
+    var reds: usize = 0;
+    var i: usize = 0;
+    while (i < px.len) : (i += 4) {
+        if (px[i] > 200 and px[i + 1] == 0 and px[i + 2] == 0) reds += 1;
+    }
+    try std.testing.expect(reds > 100);
+}
+
+test "color picker edits the caller's color" {
+    var ui = try zui.Ui.createHeadless(300, 200, 1.0);
+    defer ui.destroy();
+
+    var col = zui.Color.rgb(0x3366CC);
+    ui.beginFrame(1.0 / 60.0);
+    {
+        ui.column(.{ .pad = 12 });
+        defer ui.end();
+        _ = ui.color_picker("pick", &col);
+    }
+    ui.endFrame();
+    try std.testing.expectEqual(@as(u8, 0x33), col.r);
+}
+
+test "free utility functions" {
+    // color math
+    const mixed = zui.mix(zui.Color.rgb(0x000000), zui.Color.rgb(0xFFFFFF), 0.5);
+    try std.testing.expect(mixed.r > 40 and mixed.r < 220); // OKLab midpoint is not sRGB 128
+    // date round trip
+    const today = zui.date_today();
+    const days = zui.date_to_days(today);
+    try std.testing.expectEqual(today, zui.date_from_days(days));
+    // name lookups
+    try std.testing.expectEqualStrings("Not Found", zui.http_reason(404));
+    var next_out: i64 = 0;
+    try std.testing.expect(zui.cron_next("* * * * *", 0, 0, &next_out));
+    try std.testing.expect(next_out > 0);
+}
