@@ -77,6 +77,67 @@ test "text field binds the caller's buffer and reports flags" {
     ui.endFrame();
 }
 
+test "simulated mouse click presses a button" {
+    var ui = try zui.Ui.createHeadless(320, 200, 1.0);
+    defer ui.destroy();
+
+    // CUI's own tests simulate clicks the same way: feed each event between
+    // frames, hover first, then press for a frame, then release.
+    var clicked = false;
+
+    // frame: lay the button out and remember where it landed
+    ui.beginFrame(1.0 / 60.0);
+    {
+        ui.column(.{ .pad = 16 });
+        defer ui.end();
+        _ = ui.button("Press", .{ .width = .{ .px = 120 } });
+    }
+    ui.endFrame();
+    const r = ui.lastRect();
+    try std.testing.expect(r.w > 0 and r.h > 0);
+    const cx = r.x + r.w / 2;
+    const cy = r.y + r.h / 2;
+
+    // hover for a frame
+    ui.mouseMove(cx, cy);
+    ui.beginFrame(1.0 / 60.0);
+    {
+        ui.column(.{ .pad = 16 });
+        defer ui.end();
+        _ = ui.button("Press", .{ .width = .{ .px = 120 } });
+    }
+    ui.endFrame();
+
+    // press for a frame
+    ui.mouseButton(.left, true);
+    ui.beginFrame(1.0 / 60.0);
+    {
+        ui.column(.{ .pad = 16 });
+        defer ui.end();
+        _ = ui.button("Press", .{ .width = .{ .px = 120 } });
+    }
+    ui.endFrame();
+
+    // release, then a settle frame
+    ui.mouseButton(.left, false);
+    ui.beginFrame(1.0 / 60.0);
+    {
+        ui.column(.{ .pad = 16 });
+        defer ui.end();
+        if (ui.button("Press", .{ .width = .{ .px = 120 } })) clicked = true;
+    }
+    ui.endFrame();
+    ui.beginFrame(1.0 / 60.0);
+    {
+        ui.column(.{ .pad = 16 });
+        defer ui.end();
+        _ = ui.button("Press", .{ .width = .{ .px = 120 } });
+    }
+    ui.endFrame();
+
+    try std.testing.expect(clicked);
+}
+
 test "tmp strings live for the frame and are NUL-terminated" {
     var ui = try zui.Ui.createHeadless(120, 80, 1.0);
     defer ui.destroy();

@@ -85,7 +85,10 @@ ui.endFrame();
 try ui.render(pixels); // RGBA, software rasterizer
 ```
 
-See `src/smoke_test.zig`.
+Headless contexts can also be driven with input — feed events between frames,
+the way the app layer does: `ui.mouseMove(x, y)` / `ui.mouseButton(.left, true)`
+/ `ui.typeText("hi")`, with `ui.lastRect()` to locate a component after layout.
+`src/smoke_test.zig` includes a test that clicks a button this way.
 
 ## Layout
 
@@ -113,7 +116,7 @@ echo '<commit>' > ../zui/vendor/cui/VENDOR.txt
 
 ## Status
 
-The wrapper mirrors the core surface (layout containers, text, buttons, checkbox/switch/radio, input/textarea/search, slider/number, scroll/card/split, id and disabled scopes, app lifecycle, headless rendering). The remaining ~200 components (charts, code editor, data grid, docking, ...) are not wrapped — call them through `zui.raw.*` with `ui.h`, and consider the wrapper's `cvtOpts` pattern when promoting one to a typed API.
+The wrapper mirrors the core surface (layout containers, text, buttons, checkbox/switch/radio, input/textarea/search, slider/number, scroll/card/split, id and disabled scopes, geometry queries like `lastRect`, input simulation, app lifecycle, headless rendering). The remaining ~200 components (charts, code editor, data grid, docking, ...) are not wrapped — call them through `zui.raw.*` with `ui.h`, and consider the wrapper's `cvtOpts` pattern when promoting one to a typed API.
 
 ## License
 

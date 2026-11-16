@@ -150,6 +150,14 @@ pub const icon = struct {
     pub const copy = "\xee\x82\x9e";
 };
 
+/// C `cui_rect`.
+pub const Rect = struct { x: f32, y: f32, w: f32, h: f32 };
+
+/// C `cui_vec2`.
+pub const Vec2 = struct { x: f32, y: f32 };
+
+pub const MouseButton = enum(c_int) { left = 0, right, middle };
+
 /// Flags a text field returns for the frame (C `CUI_CHANGED` / `CUI_SUBMITTED` / ...).
 pub const InputFlags = struct {
     raw_value: c_int,
@@ -322,6 +330,8 @@ pub const InputOpts = struct {
 /// C `cui_slider_opts`.
 pub const SliderOpts = struct {
     show_value: bool = false,
+    /// printf format for the value, e.g. "%d pts"; default "%.0f"
+    format: ?[]const u8 = null,
     disabled: bool = false,
     width: Size = .fit,
 };
@@ -543,6 +553,69 @@ pub const Ui = struct {
 
     pub fn isDisabled(self: *Ui) bool {
         return c.cui_is_disabled(self.h);
+    }
+
+    // ---- queries (tooltips, popovers, tests) ---------------------------------
+
+    /// The id of the most recent component.
+    pub fn lastId(self: *Ui) u32 {
+        return c.cui_last_id(self.h);
+    }
+
+    /// Rectangle of the most recent component, after layout.
+    pub fn lastRect(self: *Ui) Rect {
+        const r = c.cui_last_rect(self.h);
+        return .{ .x = r.x, .y = r.y, .w = r.w, .h = r.h };
+    }
+
+    /// Rectangle of any component or box id from the latest layout.
+    pub fn getRect(self: *Ui, id: u32) Rect {
+        const r = c.cui_get_rect(self.h, id);
+        return .{ .x = r.x, .y = r.y, .w = r.w, .h = r.h };
+    }
+
+    /// True while the pointer is over the most recent component.
+    pub fn lastHovered(self: *Ui) bool {
+        return c.cui_last_hovered(self.h);
+    }
+
+    pub fn makeId(self: *Ui, str: []const u8) u32 {
+        return c.cui_make_id(self.h, self.tmpStr(str).ptr);
+    }
+
+    /// Scrolls the named scroll area so `y` is at its top.
+    pub fn scrollTo(self: *Ui, scroll_id: []const u8, y: f32) void {
+        c.cui_scroll_to(self.h, self.tmpStr(scroll_id).ptr, y);
+    }
+
+    // ---- input simulation (headless tests; the app layer feeds these too) ----
+
+    pub fn mouseMove(self: *Ui, x: f32, y: f32) void {
+        c.cui_input_mouse_move(self.h, x, y);
+    }
+
+    pub fn mouseLeave(self: *Ui) void {
+        c.cui_input_mouse_leave(self.h);
+    }
+
+    pub fn mouseButton(self: *Ui, b: MouseButton, down: bool) void {
+        c.cui_input_mouse_button(self.h, enumOrInt(c.cui_mouse_button, b), down);
+    }
+
+    /// Scroll wheel input in lines; +dy scrolls up.
+    pub fn scrollWheel(self: *Ui, dx: f32, dy: f32) void {
+        c.cui_input_scroll(self.h, dx, dy);
+    }
+
+    /// Feeds UTF-8 text to the focused text field.
+    pub fn typeText(self: *Ui, utf8: []const u8) void {
+        c.cui_input_text(self.h, self.tmpStr(utf8).ptr);
+    }
+
+    /// Key event. `key_code` is a C `cui_key` value (see zui.raw; the
+    /// constants live at `zui.raw.cui_key.CUI_KEY_*` or as raw ints).
+    pub fn key(self: *Ui, key_code: c.cui_key, down: bool, mods: c_int) void {
+        c.cui_input_key(self.h, key_code, down, mods);
     }
 
     // ---- text -----------------------------------------------------------------
@@ -837,6 +910,12 @@ pub const App = struct {
 
     pub fn setSize(self: *App, width: i32, height: i32) void {
         c.cui_app_set_size(self.handle, width, height);
+    }
+
+    /// The window's size in logical points.
+    pub fn size(self: *App) Vec2 {
+        const s = c.cui_app_size(self.handle);
+        return .{ .x = s.x, .y = s.y };
     }
 
     pub fn maximize(self: *App) void {
