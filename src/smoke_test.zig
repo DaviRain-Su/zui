@@ -147,6 +147,51 @@ test "tmp strings live for the frame and are NUL-terminated" {
     ui.endFrame();
 }
 
+test "generated components: charts, tables, string arrays, results" {
+    var ui = try zui.Ui.createHeadless(420, 320, 1.0);
+    defer ui.destroy();
+
+    var seg: i32 = 1;
+    const pct: f32 = 0.42;
+
+    ui.beginFrame(1.0 / 60.0);
+    {
+        ui.column(.{ .pad = 16, .gap = 8, .width = .fill, .height = .fill });
+        defer ui.end();
+
+        _ = ui.badge("v1.4.0", .{}); // opts struct with strings
+        ui.progress_bar(pct, .{}); // renamed method, float by value
+
+        // struct array with a folded pointer+count field (series values)
+        const series = [_]zui.Series{
+            .{ .name = "a", .values = &.{ 1.0, 2.0, 3.0, 2.5 } },
+            .{ .name = "b", .values = &.{ 0.5, 1.5, 1.0, 2.0 } },
+        };
+        ui.line_chart("chart", &series, .{});
+
+        // string array + int out-param
+        _ = ui.segmented("seg", &.{ "A", "B", "C" }, &seg, .{});
+        try std.testing.expect(seg == 1);
+
+        // SCOPE_IF container: body runs only when the table opened
+        const cols = [_]zui.TableColumn{
+            .{ .title = "Name", .width = .fill },
+            .{ .title = "Size" },
+        };
+        if (ui.table("t", &cols, .{})) {
+            defer ui.end();
+            _ = ui.table_row(false);
+            _ = ui.table_row(false);
+        }
+
+        // query helpers
+        try std.testing.expect(ui.lastId() != 0);
+    }
+    ui.endFrame();
+
+    const dd = ui.drawData();
+    try std.testing.expect(dd.vertex_count > 100);
+}
 test "unbalanced scopes are caught" {
     var ui = try zui.Ui.createHeadless(120, 80, 1.0);
     defer ui.destroy();

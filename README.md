@@ -96,10 +96,13 @@ the way the app layer does: `ui.mouseMove(x, y)` / `ui.mouseButton(.left, true)`
 build.zig            translates src/c_bindings.h into Zig bindings, compiles
                      vendored CUI (C99), links the window backend (Cocoa/
                      QuartzCore/OpenGL on macOS, win32, X11), builds examples
-src/zui.zig          the wrapper (Ui, App, options, enums, icons)
+tools/gen.py         generates the typed component surface from the vendored
+                     header into the marked regions of src/zui.zig
+src/zui.zig          the wrapper: hand-written core (Ui, App, options, enums,
+                     icons) + generated components between GEN markers
 src/c_bindings.h    header aggregation translated at build time
                      (Zig 0.17 removed @cImport)
-src/smoke_test.zig   headless tests
+src/smoke_test.zig   headless tests (rendering, clicks, generated components)
 examples/            hello, todo (ports of CUI's README and tutorial programs),
                      screenshot (headless PNG)
 vendor/cui/          upstream CUI (include/, src/, third_party/, LICENSE)
@@ -116,7 +119,22 @@ echo '<commit>' > ../zui/vendor/cui/VENDOR.txt
 
 ## Status
 
-The wrapper mirrors the core surface (layout containers, text, buttons, checkbox/switch/radio, input/textarea/search, slider/number, scroll/card/split, id and disabled scopes, geometry queries like `lastRect`, input simulation, app lifecycle, headless rendering). The remaining ~200 components (charts, code editor, data grid, docking, ...) are not wrapped — call them through `zui.raw.*` with `ui.h`, and consider the wrapper's `cvtOpts` pattern when promoting one to a typed API.
+The wrapper covers the whole `cui_ctx` component surface. The hand-written
+core (layout, text, buttons, inputs, app lifecycle, headless rendering) has
+curated Zig-native types; everything else is **generated** by `tools/gen.py`
+from the vendored header (~356 methods, opts structs with defaults, enums,
+begin/end pairs as scopes, `const char *const *` as `[]const []const u8`,
+pointer+count pairs folded into slices). Regenerate after updating the
+vendored CUI:
+
+```sh
+python3 tools/gen.py && zig build test
+```
+
+Only what cannot be typed from Zig stays behind `zui.raw.*`: the callback
+APIs (`cui_canvas` paint, `cui_state_on_free`, `cui_tree_sort`), the variadic
+`cui_textf` family (use `ui.textf`), the renderer interfaces, and app-layer
+extras that duplicate what `App` already wraps.
 
 ## License
 
