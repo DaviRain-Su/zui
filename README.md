@@ -1,3 +1,6 @@
+[![test](https://github.com/DaviRain-Su/zui/actions/workflows/test.yml/badge.svg)](https://github.com/DaviRain-Su/zui/actions/workflows/test.yml)
+[![CUI upstream sync](https://github.com/DaviRain-Su/zui/actions/workflows/sync-cui.yml/badge.svg)](https://github.com/DaviRain-Su/zui/actions/workflows/sync-cui.yml)
+
 # zui
 
 **CUI for Zig** — idiomatic Zig bindings for [CUI](https://github.com/yappologistic/CUI), an immediate-mode UI library written in C99 with ~210 components, no dependencies, and its own software renderer.
@@ -110,7 +113,10 @@ vendor/cui/          upstream CUI (include/, src/, third_party/, LICENSE)
 
 ## Updating the vendored CUI
 
-The vendored library is synced with one command:
+The vendored library is synced with one command — or automatically: a daily
+scheduled workflow (`sync-cui.yml`) runs the same script on GitHub Actions,
+lands green syncs on `main` directly, and files an issue when an upstream
+change breaks the tests:
 
 ```sh
 tools/sync_cui.sh            # sync to upstream master, pinned to its commit

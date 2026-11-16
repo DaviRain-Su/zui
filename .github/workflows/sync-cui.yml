@@ -1,0 +1,78 @@
+name: cui-upstream-sync
+
+# Watches the vendored CUI library. When upstream master moves, syncs it,
+# regenerates the bindings and runs the test suite; a green run lands on main
+# directly, a red run files an issue instead - a breaking upstream change can
+# never be merged silently.
+
+on:
+  schedule:
+    - cron: "0 18 * * *" # daily, 02:00 CST
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: cui-upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.1
+
+      - name: Check upstream
+        id: check
+        run: |
+          vendored=$(awk '/^commit:/ {print $2}' vendor/cui/VENDOR.txt)
+          head=$(git ls-remote https://github.com/yappologistic/CUI.git refs/heads/master | awk '{print $1}')
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          if [ "$vendored" = "$head" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "CUI master is up to date ($vendored)"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "upstream moved: $vendored -> $head"
+          fi
+
+      - name: Sync, regenerate and test
+        id: sync
+        if: steps.check.outputs.changed == 'true'
+        continue-on-error: true
+        run: ./tools/sync_cui.sh master
+
+      - name: Commit and push
+        if: steps.check.outputs.changed == 'true' && steps.sync.outcome == 'success'
+        run: |
+          git config user.name "cui-sync-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "nothing to commit"
+          else
+            commit=$(awk '/^commit:/ {print $2}' vendor/cui/VENDOR.txt)
+            git commit -m "sync CUI to master @ ${commit:0:12}"
+            git push
+          fi
+
+      - name: File an issue when the sync failed
+        if: steps.sync.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh issue list --state open --search "CUI upstream sync failed in:title" --json number | grep -q number; then
+            echo "an open issue already tracks the failure"
+            exit 0
+          fi
+          gh issue create \
+            --title "CUI upstream sync failed on master" \
+            --body "The scheduled sync ran \`tools/sync_cui.sh master\` and the tests failed against upstream ${{ steps.check.outputs.head }}. A breaking upstream change needs attention.\n\nLogs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

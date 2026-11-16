@@ -1,0 +1,49 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+          - os: ubuntu-latest
+            apt: libx11-dev libgl1-mesa-dev
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.1
+
+      - name: Install X11/GL headers
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.apt }}
+
+      - name: Tests (debug)
+        run: zig build test
+
+      - name: Tests (release-fast)
+        run: zig build -Doptimize=fast test
+
+      - name: Examples build
+        run: zig build
+
+      - name: Headless screenshot
+        run: zig build run-screenshot
+
+      - name: Upload screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshot-${{ matrix.os }}
+          path: screenshot.png
