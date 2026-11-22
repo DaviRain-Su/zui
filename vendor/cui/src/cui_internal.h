@@ -12,6 +12,7 @@
  *   animation                        cui_core.c (springs, tweens) and the motion tokens
  *   fonts and text                   cui_text.c, cui_draw.c
  *   draw list                        cui_draw.c (and the ordered dither primitive)
+ *   software screenshots             render/cui_render_sw.c
  *   layout tree                      cui_layout.c (cui_node, building and laying out the tree)
  *   per id state                     cui_core.c (cui_state, garbage collection)
  *   interaction                      cui_core.c (hit testing, focus, cui__interact)
@@ -238,6 +239,11 @@ void cui__draw_dither_rect(cui_ctx *ui, const cui__dither *d, cui_rect r, float 
  * same density in a row is one quad, and cells at 0 draw nothing. */
 void cui__draw_dither_cells(cui_ctx *ui, const cui__dither *d, int i0, int j0, int cols, int rows, const float *density);
 
+/* ---- software screenshots ---- */
+struct cui_sw_renderer;
+void cui__sw_render_screenshot(struct cui_sw_renderer *r, const cui_draw_data *dd,
+                               void *rgba, int stride);
+
 /* ---- layout tree ---- */
 enum {
     CUI_NF_TEXT        = 1 << 0,
@@ -384,6 +390,8 @@ cui_rect cui__xform_rect(cui_ctx *ui, cui_rect r);
 void cui__paint_add_hit(cui_ctx *ui, cui_id id, cui_rect r, uint32_t flags);
 /* From a paint callback: the wheel over r (inside the current clip) goes to id, ahead of any scroll area under it. */
 void cui__paint_wheel_hit(cui_ctx *ui, cui_id id, cui_rect r);
+/* The screen pointer in the layout space of wheel area `id`, using its last paint transform. */
+cui_vec2 cui__wheel_point(cui_ctx *ui, cui_id id);
 
 /* ---- per id state ---- */
 typedef struct cui_state_entry {
@@ -413,6 +421,10 @@ typedef struct cui_hit {
     int order;
 } cui_hit;
 
+/* An inactive scope stays inactive through nested pushes. Outside any scope, both fields are zero. */
+typedef struct { cui_id id; bool inactive; } cui__focus_scope;
+typedef struct { cui_id id, layer; cui__focus_scope scope; bool component_input; } cui__focus_entry;   /* component_input: a canvas that routes its own keys */
+
 /* Hit-only flags for controls whose wheel range is separate from layout scroll.
  * They share cui_hit.flags with the CUI_NF_* node flags, so they sit above all of them. */
 enum { CUI_HIT_WHEEL_UP = 1 << 20, CUI_HIT_WHEEL_DOWN = 1 << 21 };
@@ -429,7 +441,11 @@ typedef struct cui_interact {
     bool keyboard_focused;    /* focused with no popup above this layer */
 } cui_interact;
 
-enum { CUI_IF_FOCUSABLE = 1, CUI_IF_DRAG = 2, CUI_IF_KEEP_FOCUS = 4, CUI_IF_TEXT = 8 };
+enum { CUI_IF_FOCUSABLE = 1, CUI_IF_DRAG = 2, CUI_IF_KEEP_FOCUS = 4, CUI_IF_TEXT = 8, CUI_IF_COMPONENT_INPUT = 16 };
+typedef struct cui_modal_layer {
+    cui_id id;
+    int z;
+} cui_modal_layer;
 cui_interact cui__interact(cui_ctx *ui, cui_id id, int flags);
 void cui__mark_interactive(cui_ctx *ui, int node, int flags);
 void cui__set_cursor(cui_ctx *ui, cui_cursor c);
@@ -439,6 +455,7 @@ bool cui__is_layer_open(cui_ctx *ui, cui_id layer);
 /* ---- popups ---- */
 typedef struct cui_popup {
     cui_id id;
+    cui_id parent_layer;       /* layer that submitted the popup */
     cui_id anchor;
     cui_rect anchor_rect;
     bool open;
@@ -494,6 +511,8 @@ struct cui_ctx {
     /* time */
     double time;
     float dt;
+    float step;                /* the step of transitions: dt, or at most one 60 Hz frame after a rest */
+    bool wanted_frame;         /* the last frame asked for the next one: the time since is no rest */
     uint64_t frame;
     bool in_frame;
     bool animating;
@@ -534,12 +553,11 @@ struct cui_ctx {
     bool focus_visible;             /* focus came from the keyboard */
     cui_id focus_next_request;
     int focus_move;                 /* +1/-1 tab navigation requested */
-    cui_id *focus_order; int focus_count, focus_cap;
-    cui_id *prev_focus_order; int prev_focus_count, prev_focus_cap;
-    cui_id *focus_layers; int focus_layers_cap;          /* layer of each focus entry */
-    cui_id *prev_focus_layers; int prev_focus_layers_cap;
-    cui_id modal_layer, prev_modal_layer;               /* topmost open modal */
-    int modal_z;
+    cui__focus_entry *focus_order; int focus_count, focus_cap;
+    cui__focus_entry *prev_focus_order; int prev_focus_count, prev_focus_cap;
+    cui__focus_scope *focus_scope_stack; int focus_scope_depth, focus_scope_cap;
+    cui_id active_focus_scope, prev_active_focus_scope;
+    cui_modal_layer modal, prev_modal;                  /* topmost open modal */
     bool edit_prev;                                     /* a text field had focus last frame */
     cui_id hover_id_for_tooltip;
     double hover_start;
@@ -548,6 +566,14 @@ struct cui_ctx {
     cui_cursor cursor;
 
     /* input */
+    struct {
+        cui_input_hook_fn capture;
+        void *user;
+        cui_id focus_request, focus_owner;
+        cui_id previous_tab_owner;     /* built-in editor's Tab owner during replay */
+        bool repeated;
+        bool blocked_keys[CUI_KEY_COUNT];
+    } component_input;
     float mx, my, pmx, pmy;
     bool mouse_inside;
     bool mdown[3], mpressed[3], mreleased[3];
@@ -645,6 +671,7 @@ struct cui_ctx {
      * noted, so a new begin/end component adds its pointer here and nowhere else. */
     struct {
         struct cui_table_build *table; int table_depth;   /* tables nest: depth counts them */
+        const cui_vec2 *screen_pointer; /* outermost saved pointer while node content remaps mouse input */
         struct cui_split_build *split;
         struct cui_reorder_build *reorder;
         struct cui_swipe_build *swipe;

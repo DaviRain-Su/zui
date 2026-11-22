@@ -58,5 +58,7 @@ src/cui_voice.c
 src/cui_widgets.c
 src/platform/cui_app.c
 src/platform/cui_dialogs.c
+src/render/cui_render_d3d12.c
 src/render/cui_render_gl.c
 src/render/cui_render_sw.c
+src/render/cui_render_vulkan.c

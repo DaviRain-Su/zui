@@ -375,6 +375,26 @@ pub const HttpMethod = enum(c_int) {
     options = 6,
 };
 
+/// Optional application-owned input capture, before legacy aggregation.
+/// Runs synchronously on the UI thread. Event and text storage are borrowed
+/// only during the callback. true consumes the event; false preserves the
+/// existing widget behavior. No UI construction or input injection is allowed
+/// inside the callback. Copy retained text. Unregister before freeing user.
+/// To replay captured input, unregister, call the existing cui_input_* entry
+/// points, then register again. Legacy replay retains existing text-size limits.
+/// The caller owns queue limits and error policy.
+/// Key events preserve each call, including repeated down and modifier-only
+/// CUI_KEY_NONE events. File drops are not intercepted by this interface.
+pub const InputEventKind = enum(c_int) {
+    mouse_move = 0,
+    mouse_button = 1,
+    mouse_leave = 2,
+    scroll = 3,
+    key = 4,
+    text = 5,
+    focus = 6,
+};
+
 /// ---- Pipeline ----
 /// A CI/CD run: stages left to right, each a column of jobs with their status
 /// and duration. A stage's header sums up its jobs (failed, running, passed).
@@ -942,6 +962,12 @@ pub const CanvasControlsOpts = struct {
     toggles: []const CanvasToggle = &.{},
     no_fit: bool = false,  // leaves out the fit button
     start_side: bool = false,  // the rail sits at the start edge (left, or right in a right-to-left interface)
+};
+
+/// C `cui_canvas_opts` — A zeroed options struct gives the same behavior as cui_canvas.
+pub const CanvasOpts = struct {
+    focusable: bool = false,  // Tab stop; with keyboard focus Enter or Space clicks it
+    component_input: bool = false,  // requires focusable; the host routes keys instead of button activation
 };
 
 pub const CanvasResult = struct {
@@ -2072,6 +2098,18 @@ pub const InlineEditOpts = struct {
     size: f32 = 0,
     placeholder: ?[]const u8 = null,
     width: Size = .fit,
+};
+
+pub const InputEvent = struct {
+    kind: InputEventKind = .mouse_move,
+    position: Vec2 = .{ .x = 0, .y = 0 },  // mouse move only
+    delta: Vec2 = .{ .x = 0, .y = 0 },  // scroll only, same units as cui_input_scroll
+    button: MouseButton = .left,  // mouse button only
+    key: Key = .none,  // key only
+    mods: i32 = 0,  // key only; track modifier-only events too
+    down: bool = false,  // key/button only
+    focused: bool = false,  // window focus only
+    text: ?[]const u8 = null,  // text only; NUL terminated, borrowed
 };
 
 /// C `cui_inspector_opts` — Tool panels: property inspector, log console
@@ -4899,12 +4937,29 @@ pub fn dpi_scale(self: *Ui) f32 {
     return c.cui_dpi_scale(self.h);
 }
 
+/// Valid inside route: whether this key-down repeats a physical held key.
+pub fn input_repeated(self: *Ui) bool {
+    return c.cui_input_repeated(self.h);
+}
+
+/// Held state eligible for default actions. cui_key_down remains physical state.
+pub fn key_action_down(self: *Ui, key_arg: Key) bool {
+    return c.cui_key_action_down(self.h, enumOrInt(c.cui_key, key_arg));
+}
+
 pub fn dropped_file(self: *Ui, index: i32) []const u8 {
     return spanOrEmpty(c.cui_dropped_file(self.h, index));
 }
 
 pub fn file_drag_active(self: *Ui) bool {
     return c.cui_file_drag_active(self.h);
+}
+
+/// Request a cursor during component submission or painting. The last request
+/// wins. At end of frame the platform hook receives it; the next frame starts
+/// with CUI_CURSOR_ARROW.
+pub fn set_cursor(self: *Ui, cursor: Cursor) void {
+    c.cui_set_cursor(self.h, enumOrInt(c.cui_cursor, cursor));
 }
 
 pub fn get_cursor(self: *Ui) Cursor {
@@ -5025,6 +5080,18 @@ pub fn font_add_fallback(self: *Ui, font: i32, fallback: i32) void {
 /// are unsupported; the shaper implements an experimental OpenType subset.
 pub fn measure_text(self: *Ui, font: i32, size_arg: f32, s: []const u8) TextMetrics {
     return cvtBackStruct(TextMetrics, c.cui_measure_text(self.h, font, size_arg, s.ptr, @intCast(s.len)));
+}
+
+/// Restrict Tab / Shift+Tab navigation to widgets built inside the active scope
+/// (for example, the focused pane in a multi-pane workspace). An inactive scope
+/// and its descendants remain clickable but outside the Tab order. With no active
+/// scope, Tab visits unscoped controls. An open modal takes precedence.
+pub fn push_focus_scope(self: *Ui, id: u32, active: bool) void {
+    c.cui_push_focus_scope(self.h, id, active);
+}
+
+pub fn pop_focus_scope(self: *Ui) void {
+    c.cui_pop_focus_scope(self.h);
 }
 
 pub fn label_text(self: *Ui, s: []const u8) void {
@@ -5364,6 +5431,12 @@ pub fn pattern_meter(self: *Ui, id: []const u8, parts: []const MeterPart, opts: 
 /// Images
 pub fn image_create(self: *Ui, w: i32, h: i32, rgba_arg: []const u8) usize {
     return c.cui_image_create(self.h, w, h, rgba_arg.ptr);
+}
+
+/// Update a rectangle within an existing RGBA8 texture and request a redraw. stride is
+/// the byte distance between source rows: at least w * 4, or 0 for tightly packed.
+pub fn image_update(self: *Ui, tex: usize, x: i32, y: i32, w: i32, h: i32, rgba_arg: []const u8, stride: i32) void {
+    c.cui_image_update(self.h, tex, x, y, w, h, rgba_arg.ptr, stride);
 }
 
 pub fn image_load(self: *Ui, path: []const u8, w: *i32, h: *i32) usize {
@@ -5986,6 +6059,8 @@ pub fn kanban_end(self: *Ui, move: *c.cui_kanban_move) bool {
 
 /// Returns the activated event index or -1. Read-only events still activate.
 /// Pointer activation requires staying within the drag threshold through release.
+/// A drag ends when the event list shrinks, the calendar is disabled or
+/// `read_only` changes; moving the event again takes a new press.
 pub fn week_calendar(self: *Ui, id: []const u8, week_start: Date, events: []c.cui_cal_event, opts: WeekOpts) i32 {
     const zp2_c = cvtFree(c.cui_date, week_start);
     const opts_c = self.cvtOpts(c.cui_week_opts, opts);
@@ -5999,6 +6074,8 @@ pub fn month_calendar(self: *Ui, id: []const u8, month: *c.cui_date, events: []c
 }
 
 /// Returns the activated task index or -1. Read-only tasks still activate.
+/// A drag ends when the task list shrinks, the chart is disabled or
+/// `read_only` changes; moving the bar again takes a new press.
 pub fn gantt(self: *Ui, id: []const u8, tasks: []c.cui_gantt_task, origin: Date, days: i32, opts: GanttOpts) i32 {
     const zp4_c = cvtFree(c.cui_date, origin);
     const opts_c = self.cvtOpts(c.cui_gantt_opts, opts);
@@ -6794,6 +6871,39 @@ pub fn push_clip(self: *Ui, r: Rect) void {
 
 pub fn pop_clip(self: *Ui) void {
     c.cui_pop_clip(self.h);
+}
+
+/// Request focus for a submitted canvas with component_input enabled. The last
+/// request wins at end_frame and expires there. An absent, disabled, or
+/// nonparticipating target leaves the current focus unchanged. Removal revokes
+/// participating focus; built-in forward-focus behavior is unchanged.
+pub fn request_component_focus(self: *Ui, id: u32) void {
+    c.cui_request_component_focus(self.h, id);
+}
+
+/// Test eligibility from a completed submission: call after end_frame or before
+/// submitting components in the next frame. Includes window, modal and popup
+/// exclusion. Unsubmitted host visibility/disabled changes remain host-owned.
+pub fn component_has_input(self: *Ui, id: u32) bool {
+    return c.cui_component_has_input(self.h, id);
+}
+
+/// Current owner, including built-ins. Ownership alone does not imply eligibility.
+pub fn focused_id(self: *Ui) u32 {
+    return c.cui_focused_id(self.h);
+}
+
+pub fn window_focused(self: *Ui) bool {
+    return c.cui_window_focused(self.h);
+}
+
+/// Whether `id` has keyboard focus with its ring showing; for a painter.
+pub fn focus_visible(self: *Ui, id: u32) bool {
+    return c.cui_focus_visible(self.h, id);
+}
+
+pub fn frame_strdup(self: *Ui, s: []const u8) []const u8 {
+    return spanOrEmpty(c.cui_frame_strdup(self.h, self.tmpStr(s).ptr));
 }
 
 /// Marks the part of a canvas that takes the wheel, for a canvas that zooms,
