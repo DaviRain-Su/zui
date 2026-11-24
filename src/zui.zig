@@ -1024,11 +1024,12 @@ pub const CarouselOpts = struct {
 
 pub const ChartAnnotation = struct {
     kind: AnnotationKind = .x,
-    x: f64 = 0,  // in the chart's x units: the point's index for line and bar charts, x_min to x_max for the dot chart
+    x: f64 = 0,  // in the chart's x units: x_min to x_max, or the point's index in a line or bar chart that sets neither
     y: f64 = 0,  // a value, in the chart's value units
     label: ?[]const u8 = null,  // first line, e.g. "PEAK 203 MG"; `NULL` for a line with no label
     detail: ?[]const u8 = null,  // second line, muted, e.g. "13:06"; `NULL` for none
     accent: bool = false,  // the line, dot and label in the accent color
+    color: ?Color = null,  // the line, dot and label in this color, e.g. CUI_COLOR_SUCCESS; default: `accent` decides
 };
 
 pub const ChartOpts = struct {
@@ -1046,6 +1047,8 @@ pub const ChartOpts = struct {
     max: f32 = 0,  // fixed y range when min != max
     annotations: []const ChartAnnotation = &.{},  // lines and points drawn over the chart (line and bar charts)
     dither: bool = false,  // line chart: every series filled with dots that thin out from its line to the bottom of its band (implies `area`); with `stacked`, bands never mix colors
+    x_min: f64 = 0,  // line and bar charts: what the first and last point stand for, in annotation x units; equal: annotation x is the point's index
+    x_max: f64 = 0,  // line and bar charts: what the first and last point stand for, in annotation x units; equal: annotation x is the point's index
 };
 
 /// C `cui_chat_opts` — ------------------------------------------------------------------------
@@ -2464,7 +2467,7 @@ pub const MoneyOpts = struct {
 /// if (r.day_activated) new_event_on(day);
 /// With the grid focused the arrows move the selected day (into the next or
 /// previous month), Page Up and Page Down change month, Home goes to today
-/// and Enter activates the day.
+/// and Enter activates the selected day even when the pointer rests on another day.
 pub const MonthEvent = struct {
     title: ?[]const u8 = null,  // shown on the event's bar, or after the time of a timed event
     start: Date = .{},  // inclusive; an unset or earlier end means one day
@@ -3712,6 +3715,10 @@ pub const TreeTableEvents = struct {
     load: []const i32 = &.{},  // nodes to load children for (each now has CUI_TREE_LOADING), valid this frame
     selection_changed: bool = false,  // a node's `CUI_TREE_SELECTED` flag changed this frame
     sort_changed: bool = false,  // re-sort every sibling list by *sort
+    // `dropped` (const int *): pointer field, reach it via zui.raw
+    drop_count: i32 = 0,  // number of nodes in `dropped`, 0 without a drop
+    drop_target: i32 = 0,  // they go CUI_TREE_DROP_BEFORE, _INSIDE (as the last children) or _AFTER this node, else -1
+    drop_where: i32 = 0,  // they go CUI_TREE_DROP_BEFORE, _INSIDE (as the last children) or _AFTER this node, else -1
 };
 
 pub const TreeTableOpts = struct {
@@ -3724,6 +3731,8 @@ pub const TreeTableOpts = struct {
     guides: bool = false,  // quiet vertical lines for each indentation level
     // `const char *(*label)(void *user, int node)`: function-pointer field, set via zui.raw if needed
     // `user` (void *): pointer field, reach it via zui.raw
+    draggable: bool = false,  // rows drag to move nodes; the drop arrives in cui_tree_table_events
+    // `bool (*can_drop)(void *user, int target, int where)`: function-pointer field, set via zui.raw if needed
 };
 
 pub const TreemapOpts = struct {
@@ -4119,6 +4128,16 @@ pub fn alpha(color: Color, alpha_multiplier: f32) Color {
 
 pub fn date_today() Date {
     return cvtBackStruct(Date, c.cui_date_today());
+}
+
+
+/// Moves nodes, each with its subtree, before, into (after the last child) or
+/// after target, keeping their order, and relinks the nodes. Returns the new
+/// first top level node. A target that is one of the nodes or inside one,
+/// or a node listed twice, moves nothing. Flags stay as they are: open the target yourself if you
+/// want the moved nodes in view.
+pub fn tree_move(nodes: []c.cui_tree_node, root: i32, move: []const i32, move_count: i32, target: i32, where: i32) i32 {
+    return c.cui_tree_move(@ptrCast(nodes.ptr), @intCast(nodes.len), root, move.ptr, move_count, target, where);
 }
 
 

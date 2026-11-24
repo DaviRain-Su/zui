@@ -1,6 +1,6 @@
 ref: master
-commit: e0124eaef2a41f07c7d6f22aed9af48314f1b3f3
-synced: 2026-11-22
+commit: e2a0ad2a493e22eb1d96beb4991f50dc2c4ac435
+synced: 2026-11-24
 upstream: https://github.com/yappologistic/CUI
 paths: include src third_party LICENSE
 sync with: tools/sync_cui.sh [ref]
